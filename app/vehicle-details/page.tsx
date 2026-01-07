@@ -35,7 +35,7 @@ export default function VehicleDetailsPage() {
     if (savedHistory) {
       const history = JSON.parse(savedHistory)
       const pending = history.filter(
-        (item: any) => item.stage === "Dispatch Material" && item.status === "Completed"
+        (item: any) => item.stage === "Actual Dispatch" && item.status === "Completed"
       )
       setPendingOrders(pending)
     }
@@ -75,7 +75,7 @@ export default function VehicleDetailsPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 8: Vehicle Details"
+      title="Stage 6: Vehicle Details"
       description="Assign vehicle and driver for delivery."
       pendingCount={pendingOrders.length}
       historyData={[]}

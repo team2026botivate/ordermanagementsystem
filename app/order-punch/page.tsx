@@ -16,16 +16,23 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 type ProductItem = {
   id: string
   productName: string
+  rateMaterial: string
   uom: string
   orderQty: string
   altUom: string
   altQty: string
+  totalWithGst: string
 }
 
 type PreApprovalProduct = {
   id: string
   oilType: string
   rateLtr: string
+  uom: string
+  orderQty: string
+  altUom: string
+  altQty: string
+  totalWithGst: string
 }
 
 type OrderData = {
@@ -82,7 +89,7 @@ export default function OrderPunchPage() {
   const router = useRouter()
 
   const [products, setProducts] = useState<ProductItem[]>([
-    { id: "1", productName: "", uom: "", orderQty: "", altUom: "", altQty: "" },
+    { id: "1", productName: "", rateMaterial: "", uom: "", orderQty: "", altUom: "", altQty: "", totalWithGst: "" },
   ])
   const [customerType, setCustomerType] = useState<string>("")
   const [depoName, setDepoName] = useState<string>("")
@@ -101,7 +108,7 @@ export default function OrderPunchPage() {
   
   // Pre-Approval Products State
   const [preApprovalProducts, setPreApprovalProducts] = useState<PreApprovalProduct[]>([
-    { id: "1", oilType: "", rateLtr: "" }
+    { id: "1", oilType: "", rateLtr: "", uom: "", orderQty: "", altUom: "", altQty: "", totalWithGst: "" },
   ])
 
   // Legacy/Single states (kept if needed for compatibility, but mainly using the list now)
@@ -163,7 +170,16 @@ export default function OrderPunchPage() {
         setPreApprovalProducts(data.preApprovalProducts)
       } else if (data.oilType || data.rateLtr) {
         // Fallback for migrated data
-         setPreApprovalProducts([{ id: "1", oilType: data.oilType, rateLtr: data.rateLtr }])
+         setPreApprovalProducts([{ 
+           id: "1", 
+           oilType: data.oilType, 
+           rateLtr: data.rateLtr, 
+           uom: "", 
+           orderQty: "", 
+           altUom: "", 
+           altQty: "",
+           totalWithGst: ""
+          }])
       }
     }
   }, [])
@@ -298,12 +314,18 @@ export default function OrderPunchPage() {
       saveToLocalStorage()
 
       if (orderType === "regular") {
+        // For regular orders which skip Pre-Approval, pass data to Approval Of Order stage
+        const val = localStorage.getItem("orderData")
+        if (val) {
+           localStorage.setItem("commitmentReviewData", JSON.stringify({ orderData: JSON.parse(val) }))
+        }
+
         toast({
           title: "Order Saved Successfully",
-          description: "Order has been created and moved to Commitment Review stage.",
+          description: "Order has been created and moved to Approval Of Order stage.",
         })
         setTimeout(() => {
-          router.push("/commitment-review")
+          router.push("/approval-of-order")
         }, 1500)
       } else if (orderType === "pre-approval") {
         toast({
@@ -322,7 +344,7 @@ export default function OrderPunchPage() {
   const addProduct = () => {
     setProducts([
       ...products,
-      { id: Math.random().toString(36).substr(2, 9), productName: "", uom: "", orderQty: "", altUom: "", altQty: "" },
+      { id: Math.random().toString(36).substr(2, 9), productName: "", rateMaterial: "", uom: "", orderQty: "", altUom: "", altQty: "", totalWithGst: "" },
     ])
   }
 
@@ -333,14 +355,44 @@ export default function OrderPunchPage() {
   }
 
   const updateProduct = (id: string, field: keyof ProductItem, value: string) => {
-    setProducts(products.map((p) => (p.id === id ? { ...p, [field]: value } : p)))
+    setProducts((prevProducts) => 
+      prevProducts.map((p) => {
+        if (p.id !== id) return p;
+        
+        const newProduct = { ...p, [field]: value };
+        
+        // Auto-calculate Total With GST if relevant fields change
+        if (field === "rateMaterial" || field === "orderQty") {
+          const rate = parseFloat(field === "rateMaterial" ? value : p.rateMaterial) || 0;
+          const qty = parseFloat(field === "orderQty" ? value : p.orderQty) || 0;
+          
+          if (rate > 0 && qty > 0) {
+            const total = (rate * qty) * 1.18;
+            newProduct.totalWithGst = total.toFixed(2);
+          } else {
+             newProduct.totalWithGst = "";
+          }
+        }
+        
+        return newProduct;
+      })
+    );
   }
 
   // Pre-Approval Product Helpers
   const addPreApprovalProduct = () => {
     setPreApprovalProducts([
       ...preApprovalProducts,
-      { id: Math.random().toString(36).substr(2, 9), oilType: "", rateLtr: "" },
+      { 
+        id: Math.random().toString(36).substr(2, 9), 
+        oilType: "", 
+        rateLtr: "", 
+        uom: "", 
+        orderQty: "", 
+        altUom: "", 
+        altQty: "",
+        totalWithGst: "" 
+      },
     ])
   }
 
@@ -351,7 +403,28 @@ export default function OrderPunchPage() {
   }
 
   const updatePreApprovalProduct = (id: string, field: keyof PreApprovalProduct, value: string) => {
-    setPreApprovalProducts(preApprovalProducts.map((p) => (p.id === id ? { ...p, [field]: value } : p)))
+    setPreApprovalProducts((prevProducts) => 
+      prevProducts.map((p) => {
+        if (p.id !== id) return p;
+
+        const newProduct = { ...p, [field]: value };
+
+        // Auto-calculate Total With GST if relevant fields change
+        if (field === "rateLtr" || field === "orderQty") {
+          const rate = parseFloat(field === "rateLtr" ? value : p.rateLtr) || 0;
+          const qty = parseFloat(field === "orderQty" ? value : p.orderQty) || 0;
+
+          if (rate > 0 && qty > 0) {
+            const total = (rate * qty) * 1.18;
+            newProduct.totalWithGst = total.toFixed(2);
+          } else {
+             newProduct.totalWithGst = "";
+          }
+        }
+
+        return newProduct;
+      })
+    );
   }
 
   return (
@@ -590,10 +663,10 @@ export default function OrderPunchPage() {
               )}
 
               {/* Product List Logic - Conditional Rendering */}
-              {orderType === "pre-approval" ? (
+              {orderType === "pre-approval" && (
                 <div className="md:col-span-2 space-y-4 p-4 bg-muted/50 rounded-lg border">
                  <div className="flex justify-between items-center">
-                    <Label className="text-lg font-semibold">Product Details</Label>
+                    <Label className="text-lg font-semibold">Pre-Approval Products</Label>
                     <Button
                       type="button"
                       variant="outline"
@@ -605,53 +678,117 @@ export default function OrderPunchPage() {
                     </Button>
                   </div>
                   
-                  {preApprovalProducts.map((item) => (
-                    <div key={item.id} className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end border-b pb-4 last:border-0 last:pb-0">
-                      <div className="md:col-span-5 space-y-2">
-                        <Label htmlFor={`oilType-${item.id}`}>Oil Type</Label>
-                        <Select 
-                          value={item.oilType} 
-                          onValueChange={(val) => updatePreApprovalProduct(item.id, "oilType", val)}
-                        >
-                          <SelectTrigger id={`oilType-${item.id}`} className="bg-background">
-                            <SelectValue placeholder="Select Oil Type" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Rice Bran Oil">Rice Bran Oil</SelectItem>
-                            <SelectItem value="Soyabeen Oil">Soyabeen Oil</SelectItem>
-                            <SelectItem value="Palm Oil">Palm Oil</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="md:col-span-5 space-y-2">
-                        <Label htmlFor={`rateLtr-${item.id}`}>Rate per Ltr</Label>
-                        <Input
-                          id={`rateLtr-${item.id}`}
-                          type="number"
-                          placeholder="0.00"
-                          value={item.rateLtr}
-                          onChange={(e) => updatePreApprovalProduct(item.id, "rateLtr", e.target.value)}
-                          className="bg-background"
-                        />
-                      </div>
-                      <div className="md:col-span-2">
-                        <Button
+                  <div className="space-y-4">
+                    {preApprovalProducts.map((item) => (
+                      <div key={item.id} className="flex gap-4 items-center p-4 border rounded-lg bg-card">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 flex-1">
+                          
+                          {/* Row 1 */}
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Oil Type</Label>
+                            <Select 
+                              value={item.oilType} 
+                              onValueChange={(val) => updatePreApprovalProduct(item.id, "oilType", val)}
+                            >
+                              <SelectTrigger className="bg-background h-9">
+                                <SelectValue placeholder="Select Type" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Rice Bran Oil">Rice Bran Oil</SelectItem>
+                                <SelectItem value="Soyabeen Oil">Soyabeen Oil</SelectItem>
+                                <SelectItem value="Palm Oil">Palm Oil</SelectItem>
+                                <SelectItem value="Mustard Oil">Mustard Oil</SelectItem>
+                                <SelectItem value="Sunflower Oil">Sunflower Oil</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Rate in Ltr</Label>
+                             <Input
+                              type="number"
+                              placeholder="0.00"
+                              value={item.rateLtr}
+                              onChange={(e) => updatePreApprovalProduct(item.id, "rateLtr", e.target.value)}
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">UOM</Label>
+                             <Input
+                              value={item.uom}
+                              onChange={(e) => updatePreApprovalProduct(item.id, "uom", e.target.value)}
+                              placeholder="UOM"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          {/* Row 2 */}
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Order Qty</Label>
+                             <Input
+                              type="number"
+                              value={item.orderQty}
+                              onChange={(e) => updatePreApprovalProduct(item.id, "orderQty", e.target.value)}
+                              placeholder="0"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Alt UOM</Label>
+                             <Input
+                              value={item.altUom}
+                              onChange={(e) => updatePreApprovalProduct(item.id, "altUom", e.target.value)}
+                              placeholder="Alt UOM"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Alt Qty (Kg)</Label>
+                             <Input
+                              type="number"
+                              value={item.altQty}
+                              onChange={(e) => updatePreApprovalProduct(item.id, "altQty", e.target.value)}
+                              placeholder="0"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1 md:col-span-3">
+                             <Label className="text-xs text-muted-foreground">Total Amount with GST (18%)</Label>
+                             <Input
+                              readOnly
+                              value={item.totalWithGst}
+                              placeholder="0.00"
+                              className="bg-muted h-9 font-semibold"
+                            />
+                          </div>
+
+                        </div>
+
+                        {/* Action - Delete */}
+                        <div className="flex-none">
+                          <Button
                             type="button"
                             variant="ghost"
                             size="icon"
                             onClick={() => removePreApprovalProduct(item.id)}
                             disabled={preApprovalProducts.length === 1}
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        >
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8"
+                          >
                             <Trash2 className="h-4 w-4" />
-                        </Button>
+                          </Button>
+                        </div>
+
                       </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              ) : (
-                /* Regular Product List - Shows if Depo is selected */
-                depoName && (
+              )}
+              {orderType === "regular" && (
                   <div className="md:col-span-2 space-y-4 p-4 bg-muted/50 rounded-lg border">
                     <div className="flex justify-between items-center">
                       <Label className="text-lg font-semibold">Product List</Label>
@@ -665,82 +802,105 @@ export default function OrderPunchPage() {
                         <Plus className="h-4 w-4" /> Add Product
                       </Button>
                     </div>
-                    <div className="overflow-x-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead>Product Name</TableHead>
-                            <TableHead className="w-24">UOM</TableHead>
-                            <TableHead className="w-28">Order Qty</TableHead>
-                            <TableHead className="w-24">Alt UOM</TableHead>
-                            <TableHead className="w-32">Alt Qty (Kg)</TableHead>
-                            <TableHead className="w-12"></TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {products.map((product) => (
-                            <TableRow key={product.id}>
-                              <TableCell>
-                                <Input
-                                  value={product.productName}
-                                  onChange={(e) => updateProduct(product.id, "productName", e.target.value)}
-                                  placeholder="Product name"
-                                  className="bg-background"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Input
-                                  value={product.uom}
-                                  onChange={(e) => updateProduct(product.id, "uom", e.target.value)}
-                                  placeholder="UOM"
-                                  className="bg-background"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Input
-                                  type="number"
-                                  value={product.orderQty}
-                                  onChange={(e) => updateProduct(product.id, "orderQty", e.target.value)}
-                                  placeholder="0"
-                                  className="bg-background"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Input
-                                  value={product.altUom}
-                                  onChange={(e) => updateProduct(product.id, "altUom", e.target.value)}
-                                  placeholder="Alt UOM"
-                                  className="bg-background"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Input
-                                  type="number"
-                                  value={product.altQty}
-                                  onChange={(e) => updateProduct(product.id, "altQty", e.target.value)}
-                                  placeholder="0"
-                                  className="bg-background"
-                                />
-                              </TableCell>
-                              <TableCell>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => removeProduct(product.id)}
-                                  disabled={products.length === 1}
-                                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </div>
+                  <div className="space-y-4">
+                    {products.map((product) => (
+                      <div key={product.id} className="flex gap-4 items-center p-4 border rounded-lg bg-card">
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 flex-1">
+                          
+                          {/* Row 1 */}
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Product Name</Label>
+                             <Input
+                              value={product.productName}
+                              onChange={(e) => updateProduct(product.id, "productName", e.target.value)}
+                              placeholder="Product name"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Rate Material</Label>
+                             <Input
+                              type="number"
+                              value={product.rateMaterial}
+                              onChange={(e) => updateProduct(product.id, "rateMaterial", e.target.value)}
+                              placeholder="0.00"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">UOM</Label>
+                             <Input
+                              value={product.uom}
+                              onChange={(e) => updateProduct(product.id, "uom", e.target.value)}
+                              placeholder="UOM"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          {/* Row 2 */}
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Order Qty</Label>
+                             <Input
+                              type="number"
+                              value={product.orderQty}
+                              onChange={(e) => updateProduct(product.id, "orderQty", e.target.value)}
+                              placeholder="0"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Alt UOM</Label>
+                             <Input
+                              value={product.altUom}
+                              onChange={(e) => updateProduct(product.id, "altUom", e.target.value)}
+                              placeholder="Alt UOM"
+                              className="bg-background h-9"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                             <Label className="text-xs text-muted-foreground">Alt Qty (Kg)</Label>
+                             <Input
+                              type="number"
+                              value={product.altQty}
+                              onChange={(e) => updateProduct(product.id, "altQty", e.target.value)}
+                              placeholder="0"
+                              className="bg-background h-9"
+                            />
+                          </div>
+                          
+                          <div className="space-y-1 md:col-span-3">
+                             <Label className="text-xs text-muted-foreground">Total Amount with GST (18%)</Label>
+                             <Input
+                              readOnly
+                              value={product.totalWithGst}
+                              placeholder="0.00"
+                              className="bg-muted h-9 font-semibold"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Action - Delete */}
+                        <div className="flex-none">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeProduct(product.id)}
+                            disabled={products.length === 1}
+                            className="text-destructive hover:text-destructive hover:bg-destructive/10 h-8 w-8"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )
+                </div>
+                /* ) - REMOVED CLOSING PAREN */
               )}
 
               {/* Legacy Oil Type View - removed for now as confusing with Depo logic

@@ -95,7 +95,7 @@ export default function DamageAdjustmentPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 16: Damage Adjustment"
+      title="Stage 13: Damage Adjustment"
       description="Process credit notes and adjustments for damaged goods."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({

@@ -107,7 +107,7 @@ export default function MaterialReceiptPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 15: Confirm Material Receipt"
+      title="Stage 12: Confirm Material Receipt"
       description="Confirm material receipt and report any damages."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({

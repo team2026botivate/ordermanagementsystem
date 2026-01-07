@@ -91,7 +91,7 @@ export default function SecurityApprovalPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 10: Security Guard Approval"
+      title="Stage 8: Security Guard Approval"
       description="Upload bilty and vehicle images for security verification."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({

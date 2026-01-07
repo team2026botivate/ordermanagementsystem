@@ -19,6 +19,7 @@ import {
   Factory,
   Car,
   Search,
+  Send,
 } from "lucide-react"
 import { usePathname } from "next/navigation"
 
@@ -39,17 +40,16 @@ const modules = [
   { title: "Dashboard", icon: LayoutDashboard, url: "/" },
   { title: "Order Punch", icon: ClipboardPen, url: "/order-punch" },
   { title: "Pre Approval", icon: BadgeCheck, url: "/pre-approval" },
-  { title: "Before Entry in Commitment", icon: FileSearch, url: "/commitment-review" },
-  { title: "Commitment Entry", icon: BookMarked, url: "/commitment-entry" },
-  { title: "Overall Order Checking", icon: Search, url: "/overall-checking" },
-  { title: "Check For Delivery", icon: Factory, url: "/check-delivery" },
-  { title: "Dispatch Material", icon: PackageCheck, url: "/dispatch-material" },
-  { title: "Get Vehicle Details", icon: Car, url: "/vehicle-details" },
+  { title: "Approval of Order", icon: FileSearch, url: "/approval-of-order" },
+
+  { title: "Dispatch Planning", icon: PackageCheck, url: "/dispatch-material" },
+  { title: "Actual Dispatch", icon: Send, url: "/actual-dispatch" },
+  { title: "Vehicle Details", icon: Car, url: "/vehicle-details" },
   { title: "Material Load", icon: Truck, url: "/material-load" },
   { title: "Security Guard Approval", icon: ShieldCheck, url: "/security-approval" },
   { title: "Make Invoice (Proforma)", icon: FileText, url: "/make-invoice" },
   { title: "Check Invoice", icon: FileCheck, url: "/check-invoice" },
-  { title: "E-Invoice & E-Way Bill", icon: Receipt, url: "/e-invoice" },
+
   { title: "Gate Out", icon: Gate, url: "/gate-out" },
   { title: "Confirm Material Receipt", icon: FileSignature, url: "/material-receipt" },
   { title: "Damage Adjustment", icon: AlertCircle, url: "/damage-adjustment" },

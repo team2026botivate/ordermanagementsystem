@@ -285,7 +285,7 @@ export default function PreApprovalPage() {
         description: "Order moved to Before Entry in Commitment.",
       })
       setTimeout(() => {
-        router.push("/commitment-review")
+        router.push("/approval-of-order")
       }, 1500)
     } finally {
       setIsApproving(false)

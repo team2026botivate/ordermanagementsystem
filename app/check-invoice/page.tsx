@@ -78,10 +78,10 @@ export default function CheckInvoicePage() {
         setHistoryOrders((prev) => [...prev, updatedOrder])
         toast({
           title: "Invoice Approved",
-          description: "Order moved to E-Invoice stage.",
+          description: "Order moved to Gate Out stage.",
         })
         setTimeout(() => {
-          router.push("/e-invoice")
+          router.push("/gate-out")
         }, 1500)
       } else {
         toast({
@@ -97,7 +97,7 @@ export default function CheckInvoicePage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 12: Check Invoice"
+      title="Stage 10: Check Invoice"
       description="Review and verify invoice details."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({

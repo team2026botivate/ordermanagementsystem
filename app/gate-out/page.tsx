@@ -43,7 +43,7 @@ export default function GateOutPage() {
       setHistoryOrders(completed)
 
       const pending = history.filter(
-        (item: any) => item.stage === "E-Invoice" && item.status === "Completed"
+        (item: any) => item.stage === "Check Invoice" && item.status === "Completed"
       ).filter(
         (item: any) => 
           !completed.some((completedItem: any) => completedItem.doNumber === item.doNumber)
@@ -92,7 +92,7 @@ export default function GateOutPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 14: Gate Out"
+      title="Stage 11: Gate Out"
       description="Record gate out details and upload gate pass."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({

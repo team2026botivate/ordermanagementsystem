@@ -19,6 +19,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Upload } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
 export default function MakeInvoicePage() {
   const router = useRouter()
@@ -26,12 +27,17 @@ export default function MakeInvoicePage() {
   const [pendingOrders, setPendingOrders] = useState<any[]>([])
   const [historyOrders, setHistoryOrders] = useState<any[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
+  const [invoiceType, setInvoiceType] = useState<"independent" | "common" | "">("")
   const [invoiceData, setInvoiceData] = useState({
     invoiceNo: "",
+    invoiceDate: new Date().toISOString().split('T')[0], // Default to today
+    qty: "",
+    billAmount: "",
     invoiceFile: null as File | null,
   })
 
   useEffect(() => {
+    // ... existing useEffect logic ...
     const savedHistory = localStorage.getItem("workflowHistory")
     if (savedHistory) {
       const history = JSON.parse(savedHistory)
@@ -59,7 +65,11 @@ export default function MakeInvoicePage() {
         stage: "Make Invoice",
         status: "Completed",
         invoiceData: {
+          type: invoiceType,
           invoiceNo: invoiceData.invoiceNo,
+          invoiceDate: invoiceType === 'independent' ? invoiceData.invoiceDate : null,
+          qty: invoiceData.qty,
+          billAmount: invoiceType === 'independent' ? invoiceData.billAmount : null,
           invoiceUploaded: !!invoiceData.invoiceFile,
           createdAt: new Date().toISOString(),
         },
@@ -91,11 +101,11 @@ export default function MakeInvoicePage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 11: Make Invoice (Proforma)"
+      title="Stage 9: Make Invoice (Proforma)"
       description="Create proforma invoice for the order."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({
-        date: new Date(order.invoiceData?.createdAt || new Date()).toLocaleDateString(),
+        date: new Date(order.invoiceData?.createdAt || new Date()).toLocaleDateString("en-GB"),
         stage: "Make Invoice",
         status: "Completed",
         remarks: order.invoiceData?.invoiceNo || "Generated",
@@ -126,6 +136,31 @@ export default function MakeInvoicePage() {
                           <DialogTitle>Make Invoice: {order.orderNo}</DialogTitle>
                         </DialogHeader>
                         <div className="space-y-4 py-4">
+                          
+                          <div className="space-y-2">
+                              <Label>Build Type</Label>
+                              <Select value={invoiceType} onValueChange={(val: any) => setInvoiceType(val)}>
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Select Type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="independent">Independent</SelectItem>
+                                  <SelectItem value="common">Common</SelectItem>
+                                </SelectContent>
+                              </Select>
+                          </div>
+
+                          {invoiceType === "independent" && (
+                            <div className="space-y-2">
+                                <Label>Invoice Date</Label>
+                                <Input 
+                                    type="date" 
+                                    value={invoiceData.invoiceDate} 
+                                    onChange={(e) => setInvoiceData({...invoiceData, invoiceDate: e.target.value})} 
+                                />
+                            </div>
+                          )}
+
                           <div className="space-y-2">
                             <Label>Invoice Number</Label>
                             <Input
@@ -134,6 +169,29 @@ export default function MakeInvoicePage() {
                               placeholder="Enter invoice number"
                             />
                           </div>
+                          
+                          <div className="space-y-2">
+                            <Label>Qty</Label>
+                            <Input
+                              type="number"
+                              value={invoiceData.qty}
+                              onChange={(e) => setInvoiceData({ ...invoiceData, qty: e.target.value })}
+                              placeholder="Enter Quantity"
+                            />
+                          </div>
+
+                          {invoiceType === "independent" && (
+                            <div className="space-y-2">
+                                <Label>Bill Amount</Label>
+                                <Input
+                                    type="number" 
+                                    value={invoiceData.billAmount} 
+                                    onChange={(e) => setInvoiceData({...invoiceData, billAmount: e.target.value})} 
+                                    placeholder="Enter Bill Amount"
+                                />
+                            </div>
+                          )}
+
                           <div className="space-y-2">
                             <Label>Upload Invoice</Label>
                             <div className="border-2 border-dashed rounded-lg p-6 text-center">
@@ -160,7 +218,7 @@ export default function MakeInvoicePage() {
                         <DialogFooter>
                           <Button
                             onClick={() => handleSubmit(order)}
-                            disabled={!invoiceData.invoiceNo || isProcessing}
+                            disabled={!invoiceData.invoiceNo || !invoiceType || isProcessing}
                           >
                             {isProcessing ? "Processing..." : "Submit Invoice"}
                           </Button>

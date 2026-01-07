@@ -1,4 +1,6 @@
 "use client"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
@@ -8,16 +10,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 
 export default function DispatchMaterialPage() {
@@ -35,6 +27,7 @@ export default function DispatchMaterialPage() {
     packagingComplete: false,
     labelsAttached: false,
   })
+  const [dispatchDetails, setDispatchDetails] = useState<Record<string, { qty: string, transportType: string }>>({})
 
   useEffect(() => {
     const savedHistory = localStorage.getItem("workflowHistory")
@@ -43,12 +36,12 @@ export default function DispatchMaterialPage() {
 
       
       const completed = history.filter(
-        (item: any) => item.stage === "Dispatch Material" && item.status === "Completed"
+        (item: any) => (item.stage === "Dispatch Material" || item.stage === "Dispatch Planning") && item.status === "Completed"
       )
       setHistoryOrders(completed)
       
       const pending = history.filter(
-        (item: any) => item.stage === "Check Delivery" && item.status === "Completed"
+        (item: any) => item.stage === "Approval Of Order" && item.status === "Approved"
       ).filter(
         (item: any) => 
           !completed.some((completedItem: any) => completedItem.doNumber === item.doNumber)
@@ -61,11 +54,12 @@ export default function DispatchMaterialPage() {
     if (selectedOrders.length === pendingOrders.length) {
       setSelectedOrders([])
     } else {
-      setSelectedOrders(pendingOrders.map((order) => order.doNumber))
+      setSelectedOrders(pendingOrders.map((order) => order.doNumber || order.orderNo))
     }
   }
 
   const toggleSelectOrder = (orderNo: string) => {
+    if (!orderNo) return
     if (selectedOrders.includes(orderNo)) {
       setSelectedOrders(selectedOrders.filter((id) => id !== orderNo))
     } else {
@@ -80,27 +74,42 @@ export default function DispatchMaterialPage() {
       const history = savedHistory ? JSON.parse(savedHistory) : []
 
       const ordersToDispatch = pendingOrders.filter((order) =>
-        selectedOrders.includes(order.doNumber)
+        selectedOrders.includes(order.doNumber || order.orderNo)
       )
 
-      const updatedOrders = ordersToDispatch.map((order) => ({
-        ...order,
-        stage: "Dispatch Material",
-        status: "Completed",
-        dispatchData: {
-          ...dispatchData,
-          dispatchedAt: new Date().toISOString(),
-        },
-      }))
+      const updatedOrders = ordersToDispatch.map((order) => {
+        // Ensure we have a DO Number. If not, generate one or use OrderNo with prefix if needed
+        const existingDoNumber = order.doNumber;
+        // If orderNo matches DO format (DO-...), use it. Else generate or prefix.
+        // For simplicity/robustness, if doNumber is missing, we can assign one.
+        // If "hsfjk" is the orderNo, maybe make DO-hsfjk or just generate DO-{Random}
+        // User requested distinct format "DO-001". Since we don't have a counter, we'll try to use orderNo if it looks like an ID, else "DO-" + orderNo
+        
+        const finalDoNumber = existingDoNumber || (order.orderNo?.startsWith("DO-") ? order.orderNo : `DO-${order.orderNo}`);
+
+        return {
+          ...order,
+          doNumber: finalDoNumber, // Ensure this property is set for future stages
+          stage: "Dispatch Planning",
+          status: "Completed",
+          dispatchData: {
+            ...dispatchData,
+            dispatchedAt: new Date().toISOString(),
+            qtyToDispatch: dispatchDetails[order.doNumber || order.orderNo]?.qty || "",
+            transportType: dispatchDetails[order.doNumber || order.orderNo]?.transportType || "",
+          },
+        }
+      })
 
       // Update history
       updatedOrders.forEach((order) => history.push(order))
       localStorage.setItem("workflowHistory", JSON.stringify(history))
       
       // Update local state immediately
-      setPendingOrders((prev) => prev.filter(order => !ordersToDispatch.some(d => d.doNumber === order.doNumber)))
+      setPendingOrders((prev) => prev.filter(order => !ordersToDispatch.some(d => (d.doNumber || d.orderNo) === (order.doNumber || order.orderNo))))
       setHistoryOrders((prev) => [...prev, ...updatedOrders])
       setSelectedOrders([])
+      setDispatchDetails({})
 
       // Update current order data (just taking the last one as current context if needed, or arguably this might be less relevant for bulk)
       if (updatedOrders.length > 0) {
@@ -113,7 +122,7 @@ export default function DispatchMaterialPage() {
       })
 
       setTimeout(() => {
-        router.push("/vehicle-details")
+        router.push("/actual-dispatch")
       }, 1500)
     } finally {
       setIsProcessing(false)
@@ -124,14 +133,14 @@ export default function DispatchMaterialPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 7: Dispatch Material"
-      description="Prepare and dispatch materials for delivery."
+      title="Stage 4: Dispatch Planning"
+      description="Prepare and Dispatch Plannings for delivery."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({
-        date: new Date(order.dispatchData?.dispatchedAt || new Date()).toLocaleDateString(),
-        stage: "Dispatch Material",
+        date: new Date(order.dispatchData?.dispatchedAt || order.timestamp || new Date()).toLocaleDateString("en-GB"),
+        stage: "Dispatch Planning",
         status: "Completed",
-        remarks: `Dispatched: ${order.dispatchData?.dispatchDate}`,
+        remarks: order.dispatchData?.dispatchDate ? `Dispatched: ${order.dispatchData.dispatchDate}` : "Dispatched",
       }))}
     >
       <div className="flex justify-end">
@@ -157,6 +166,8 @@ export default function DispatchMaterialPage() {
               <TableHead>DO Number</TableHead>
               <TableHead>Customer</TableHead>
               <TableHead>Products</TableHead>
+              <TableHead className="w-[150px]">Qty to be Dispatch</TableHead>
+              <TableHead className="w-[200px]">Type of Transporting</TableHead>
               <TableHead>Delivery From</TableHead>
               <TableHead>Status</TableHead>
             </TableRow>
@@ -167,14 +178,57 @@ export default function DispatchMaterialPage() {
                 <TableRow key={index}>
                   <TableCell>
                     <Checkbox
-                      checked={selectedOrders.includes(order.doNumber)}
-                      onCheckedChange={() => toggleSelectOrder(order.doNumber)}
-                      aria-label={`Select order ${order.doNumber}`}
+                      checked={selectedOrders.includes(order.doNumber || order.orderNo)}
+                      onCheckedChange={() => toggleSelectOrder(order.doNumber || order.orderNo)}
+                      aria-label={`Select order ${order.doNumber || order.orderNo}`}
                     />
                   </TableCell>
-                  <TableCell className="font-medium">{order.doNumber}</TableCell>
+                  <TableCell className="font-medium">{order.doNumber || order.orderNo}</TableCell>
                   <TableCell>{order.customerName}</TableCell>
                   <TableCell>{order.productCount} Products</TableCell>
+                  <TableCell>
+                    <Input
+                      type="number"
+                      placeholder="Qty"
+                      className="h-8"
+                      value={dispatchDetails[order.doNumber || order.orderNo]?.qty || ""}
+                      onChange={(e) =>
+                        setDispatchDetails((prev) => ({
+                          ...prev,
+                          [order.doNumber || order.orderNo]: {
+                             ...prev[order.doNumber || order.orderNo],
+                             qty: e.target.value
+                          }
+                        }))
+                      }
+                      disabled={!selectedOrders.includes(order.doNumber || order.orderNo)}
+                    />
+                  </TableCell>
+                   <TableCell>
+                    <Select
+                      value={dispatchDetails[order.doNumber || order.orderNo]?.transportType || ""}
+                      onValueChange={(val) =>
+                        setDispatchDetails((prev) => ({
+                          ...prev,
+                          [order.doNumber || order.orderNo]: {
+                             ...prev[order.doNumber || order.orderNo],
+                             transportType: val
+                          }
+                        }))
+                      }
+                      disabled={!selectedOrders.includes(order.doNumber || order.orderNo)}
+                    >
+                      <SelectTrigger className="h-8">
+                        <SelectValue placeholder="Select" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="company_vehicle">Company Vehicle</SelectItem>
+                        <SelectItem value="transporter">Transporter</SelectItem>
+                        <SelectItem value="customer_vehicle">Customer Vehicle</SelectItem>
+                        <SelectItem value="courier">Courier</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </TableCell>
                   <TableCell>
                     {order.deliveryData?.deliveryFrom === "in-stock"
                       ? "In Stock"

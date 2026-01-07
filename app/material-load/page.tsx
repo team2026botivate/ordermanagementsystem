@@ -54,7 +54,7 @@ export default function MaterialLoadPage() {
         (item: any) => item.stage === "Vehicle Details" && item.status === "Completed"
       ).filter(
         (item: any) => 
-          !completed.some((completedItem: any) => completedItem.doNumber === item.doNumber)
+          !completed.some((completedItem: any) => (completedItem.doNumber || completedItem.orderNo) === (item.doNumber || item.orderNo))
       )
       setPendingOrders(pending)
     }
@@ -110,7 +110,7 @@ export default function MaterialLoadPage() {
 
   return (
     <WorkflowStageShell
-      title="Stage 9: Material Load"
+      title="Stage 7: Material Load"
       description="Record material loading details and weights."
       pendingCount={pendingOrders.length}
       historyData={historyOrders.map((order) => ({
