@@ -105,17 +105,74 @@ export default function MaterialReceiptPage() {
     }
   }
 
+  /* Extract unique customer names */
+  const customerNames = Array.from(new Set(pendingOrders.map(order => order.customerName || "Unknown")))
+
+  const [filterValues, setFilterValues] = useState({
+      status: "",
+      startDate: "",
+      endDate: "",
+      partyName: ""
+  })
+
+  const filteredPendingOrders = pendingOrders.filter(order => {
+      let matches = true
+      
+      // Filter by Party Name
+      if (filterValues.partyName && filterValues.partyName !== "all" && order.customerName !== filterValues.partyName) {
+          matches = false
+      }
+
+      // Filter by Date Range
+      const orderDateStr = order.receiptData?.receivedAt || order.gateOutData?.gateOutTime || order.timestamp
+      if (orderDateStr) {
+          const orderDate = new Date(orderDateStr)
+          if (filterValues.startDate) {
+              const start = new Date(filterValues.startDate)
+              start.setHours(0,0,0,0)
+              if (orderDate < start) matches = false
+          }
+          if (filterValues.endDate) {
+              const end = new Date(filterValues.endDate)
+              end.setHours(23,59,59,999)
+              if (orderDate > end) matches = false
+          }
+      }
+
+      // Filter by Status (On Time / Expire)
+      if (filterValues.status) {
+          const today = new Date()
+          today.setHours(0, 0, 0, 0)
+          const targetDateStr = order.deliveryDate || order.timestamp
+          if (targetDateStr) {
+             const targetDate = new Date(targetDateStr)
+             
+             if (filterValues.status === "expire") {
+                 if (targetDate < today) matches = true
+                 else matches = false
+             } else if (filterValues.status === "on-time") {
+                 if (targetDate >= today) matches = true
+                 else matches = false
+             }
+          }
+      }
+
+      return matches
+  })
+
   return (
     <WorkflowStageShell
       title="Stage 12: Confirm Material Receipt"
       description="Confirm material receipt and report any damages."
-      pendingCount={pendingOrders.length}
+      pendingCount={filteredPendingOrders.length}
       historyData={historyOrders.map((order) => ({
         date: new Date(order.receiptData?.receivedAt || new Date()).toLocaleDateString(),
         stage: "Material Receipt",
         status: order.status,
         remarks: order.receiptData?.hasDamage === "yes" ? `Damaged: ${order.receiptData.damageQty}` : "Received OK",
       }))}
+      partyNames={customerNames}
+      onFilterChange={setFilterValues}
     >
       <Card className="border-none shadow-sm overflow-hidden">
         <Table>
@@ -129,8 +186,8 @@ export default function MaterialReceiptPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pendingOrders.length > 0 ? (
-              pendingOrders.map((order, index) => (
+            {filteredPendingOrders.length > 0 ? (
+              filteredPendingOrders.map((order, index) => (
                 <TableRow key={index}>
                   <TableCell>
                     <Dialog>

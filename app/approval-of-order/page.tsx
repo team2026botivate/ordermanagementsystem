@@ -246,12 +246,77 @@ export default function CommitmentReviewPage() {
     }
   }
 
+  /* Extract unique customer names */
+  const customerNames = Array.from(new Set(pendingOrders.map(order => order.customerName || "Unknown")))
+
+  const [filterValues, setFilterValues] = useState({
+      status: "",
+      startDate: "",
+      endDate: "",
+      partyName: ""
+  })
+
+  const filteredPendingOrders = pendingOrders.filter(order => {
+      let matches = true
+      
+      // Filter by Party Name
+      if (filterValues.partyName && filterValues.partyName !== "all" && order.customerName !== filterValues.partyName) {
+          matches = false
+      }
+
+      // Filter by Date Range
+      // Check for timestamp or date field
+      const orderDateStr = order.deliveryData?.date || order.date || order.timestamp
+      if (orderDateStr) {
+          const orderDate = new Date(orderDateStr)
+          if (filterValues.startDate) {
+              const start = new Date(filterValues.startDate)
+              start.setHours(0,0,0,0)
+              if (orderDate < start) matches = false
+          }
+          if (filterValues.endDate) {
+              const end = new Date(filterValues.endDate)
+              end.setHours(23,59,59,999)
+              if (orderDate > end) matches = false
+          }
+      }
+
+      // Filter by Status (Simulating Expiry based on arbitrary logic if no due date, 
+      // typically approval is needed ASAP so maybe compare created date vs today)
+      // For now, let's use the same logic: "on-time" if recent, "expire" if old (>7 days?)
+      // OR better, if the order object has a due date.
+      // Let's assume deliveryDate exists as in other stages, or default to checking 'timestamp' vs today.
+      
+      if (filterValues.status) {
+          const targetDateStr = order.deliveryData?.expectedDeliveryDate || order.deliveryDate || order.timestamp
+          if (targetDateStr) {
+             const targetDate = new Date(targetDateStr)
+             const today = new Date()
+             today.setHours(0, 0, 0, 0)
+             
+             if (filterValues.status === "expire") {
+                 // If Expected Date is in past, it's expired/overdue? OR if it's "Expire" status.
+                 // Let's assume "Expire" means "Overdue"
+                 if (targetDate < today) matches = true // keeping 'expire' matches
+                 else matches = false
+             } else if (filterValues.status === "on-time") {
+                 if (targetDate >= today) matches = true
+                 else matches = false
+             }
+          }
+      }
+
+      return matches
+  })
+
   return (
     <WorkflowStageShell
       title="Stage 3: Approval Of Order"
       description="Six-point verification check before commitment entry."
-      pendingCount={pendingOrders.length}
+      pendingCount={filteredPendingOrders.length}
       historyData={history}
+        partyNames={customerNames}
+        onFilterChange={setFilterValues}
     >
       <Card className="border-none shadow-sm overflow-hidden">
         <Table>
@@ -266,8 +331,8 @@ export default function CommitmentReviewPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pendingOrders.length > 0 ? (
-              pendingOrders.map((order: any, index: number) => (
+            {filteredPendingOrders.length > 0 ? (
+              filteredPendingOrders.map((order: any, index: number) => (
               <TableRow key={index}>
                 <TableCell>
                   <Dialog open={selectedOrder?.doNumber === order.doNumber} onOpenChange={(open) => {

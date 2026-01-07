@@ -295,13 +295,67 @@ export default function PreApprovalPage() {
 
 
   const destinationColumnsCount = visibleColumns.length + 1
+  
+  /* Extract unique customer names */
+  const customerNames = Array.from(new Set(pendingOrders.map(order => order.customerName || "Unknown")))
+
+  const [filterValues, setFilterValues] = useState({
+      status: "",
+      startDate: "",
+      endDate: "",
+      partyName: ""
+  })
+
+  const filteredPendingOrders = pendingOrders.filter(order => {
+      let matches = true
+      
+      // Filter by Party Name
+      if (filterValues.partyName && filterValues.partyName !== "all" && order.customerName !== filterValues.partyName) {
+          matches = false
+      }
+
+      // Filter by Date Range (using deliveryDate or soDate as fallback)
+      const orderDateStr = order.deliveryDate || order.soDate
+      if (orderDateStr) {
+          const orderDate = new Date(orderDateStr)
+          if (filterValues.startDate) {
+              const start = new Date(filterValues.startDate)
+              if (orderDate < start) matches = false
+          }
+          if (filterValues.endDate) {
+              const end = new Date(filterValues.endDate)
+              if (orderDate > end) matches = false
+          }
+      }
+
+      // Filter by Status (On Time / Expire)
+      // "Expire" = deliveryDate is in the past
+      // "On Time" = deliveryDate is today or future
+      if (filterValues.status) {
+          const today = new Date()
+          today.setHours(0, 0, 0, 0) // normalized today
+          
+          if (orderDateStr) {
+             const deliveryDate = new Date(orderDateStr)
+             if (filterValues.status === "expire") {
+                 if (deliveryDate >= today) matches = false
+             } else if (filterValues.status === "on-time") {
+                 if (deliveryDate < today) matches = false
+             }
+          }
+      }
+
+      return matches
+  })
 
   return (
     <WorkflowStageShell
       title="Stage 2: Pre-Approval"
       description="Review and set rates for item requirements."
-      pendingCount={pendingOrders.length}
+      pendingCount={filteredPendingOrders.length}
       historyData={history}
+        partyNames={customerNames}
+        onFilterChange={setFilterValues}
     >
       <div className="space-y-4">
         <div className="flex justify-end">
@@ -344,7 +398,7 @@ export default function PreApprovalPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {pendingOrders.map((rawOrder, i) => {
+              {filteredPendingOrders.map((rawOrder, i) => {
                 const row = {
                    orderNo: rawOrder.doNumber || "DO-XXXA",
                    deliveryPurpose: rawOrder.orderPurpose || "Week On Week",

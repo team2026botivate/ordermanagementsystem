@@ -103,17 +103,74 @@ export default function ActualDispatchPage() {
     }
   }
 
+  /* Extract unique customer names */
+  const customerNames = Array.from(new Set(pendingOrders.map(order => order.customerName || "Unknown")))
+
+  const [filterValues, setFilterValues] = useState({
+      status: "",
+      startDate: "",
+      endDate: "",
+      partyName: ""
+  })
+
+  const filteredPendingOrders = pendingOrders.filter(order => {
+      let matches = true
+      
+      // Filter by Party Name
+      if (filterValues.partyName && filterValues.partyName !== "all" && order.customerName !== filterValues.partyName) {
+          matches = false
+      }
+
+      // Filter by Date Range
+      const orderDateStr = order.dispatchData?.dispatchDate || order.timestamp
+      if (orderDateStr) {
+          const orderDate = new Date(orderDateStr)
+          if (filterValues.startDate) {
+              const start = new Date(filterValues.startDate)
+              start.setHours(0,0,0,0)
+              if (orderDate < start) matches = false
+          }
+          if (filterValues.endDate) {
+              const end = new Date(filterValues.endDate)
+              end.setHours(23,59,59,999)
+              if (orderDate > end) matches = false
+          }
+      }
+
+      // Filter by Status (On Time / Expire)
+      if (filterValues.status) {
+          const today = new Date()
+          today.setHours(0, 0, 0, 0)
+          const targetDateStr = order.deliveryDate || order.timestamp
+          if (targetDateStr) {
+             const targetDate = new Date(targetDateStr)
+             
+             if (filterValues.status === "expire") {
+                 if (targetDate < today) matches = true
+                 else matches = false
+             } else if (filterValues.status === "on-time") {
+                 if (targetDate >= today) matches = true
+                 else matches = false
+             }
+          }
+      }
+
+      return matches
+  })
+
   return (
     <WorkflowStageShell
       title="Stage 5: Actual Dispatch"
       description="Confirm actual dispatch details before vehicle assignment."
-      pendingCount={pendingOrders.length}
+      pendingCount={filteredPendingOrders.length}
       historyData={historyOrders.map((order) => ({
         date: new Date(order.actualDispatchData?.confirmedAt || order.timestamp || new Date()).toLocaleDateString("en-GB"),
         stage: "Actual Dispatch",
         status: "Completed",
         remarks: "Dispatch Confirmed",
       }))}
+      partyNames={customerNames}
+      onFilterChange={setFilterValues}
     >
       <div className="flex justify-end">
         <Button
@@ -130,7 +187,7 @@ export default function ActualDispatchPage() {
             <TableRow>
               <TableHead className="w-12">
                 <Checkbox
-                  checked={pendingOrders.length > 0 && selectedOrders.length === pendingOrders.length}
+                  checked={filteredPendingOrders.length > 0 && selectedOrders.length === filteredPendingOrders.length}
                   onCheckedChange={toggleSelectAll}
                   aria-label="Select all"
                 />
@@ -144,8 +201,8 @@ export default function ActualDispatchPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {pendingOrders.length > 0 ? (
-              pendingOrders.map((order, index) => { 
+            {filteredPendingOrders.length > 0 ? (
+              filteredPendingOrders.map((order, index) => { 
                 const deliveryFrom = order.data?.orderData?.deliveryData?.deliveryFrom || order.deliveryData?.deliveryFrom;
                 return (
                 <TableRow key={index}>

@@ -56,13 +56,58 @@ export default function CommitmentPendingPage() {
     }
   }
 
+
+  /* Extract unique customer names */
+  const customerNames = pendingOrder?.orderData?.customerName ? [pendingOrder.orderData.customerName] : []
+
+  const [filterValues, setFilterValues] = useState({
+      status: "",
+      startDate: "",
+      endDate: "",
+      partyName: ""
+  })
+
+  // Since this page handles a single pending order mainly, filtering implies hiding/showing the single order?
+  // Or if it handled a list, it would be a map. The current code shows one pendingOrder.
+  // We'll wrap the logic to conditionally render or assume it's relevant if it matches.
+  // For single view pages, filtering is less effective but we keep consistency.
+  
+  let showOrder = true;
+  if (pendingOrder) {
+      if (filterValues.partyName && filterValues.partyName !== "all" && pendingOrder.orderData?.customerName !== filterValues.partyName) {
+          showOrder = false;
+      }
+      
+      const orderDateStr = pendingOrder.orderData?.createdAt || pendingOrder.orderData?.deliveryDate 
+      if (orderDateStr) {
+          const orderDate = new Date(orderDateStr)
+          if (filterValues.startDate) {
+              const start = new Date(filterValues.startDate)
+              start.setHours(0,0,0,0)
+              if (orderDate < start) showOrder = false
+          }
+           if (filterValues.endDate) {
+              const end = new Date(filterValues.endDate)
+              end.setHours(23,59,59,999)
+              if (orderDate > end) showOrder = false
+          }
+      }
+  }
+
+  // If showOrder is false, we can pass pendingCount=0 or similar, but the UI structure is different (Cards, not Table row map).
+  // We will just pass `pendingCount` and `onFilterChange` and if !showOrder returning a "No matching order message" could be better,
+  // but let's keep it simple: just update the shell props to support filters, and wrap the content.
+
   return (
     <WorkflowStageShell
       title="Stage 4: Commitment Pending"
       description="Order is pending for final commitment entry completion."
-      pendingCount={1}
+      pendingCount={showOrder && pendingOrder ? 1 : 0}
       historyData={[]}
+      partyNames={customerNames}
+      onFilterChange={setFilterValues}
     >
+      {showOrder && pendingOrder ? (
       <div className="grid gap-6 max-w-4xl">
         <Card className="border-2 border-yellow-200 bg-yellow-50/30">
           <CardHeader className="flex flex-row items-center justify-between">
@@ -151,6 +196,11 @@ export default function CommitmentPendingPage() {
           </Button>
         </div>
       </div>
+      ) : (
+          <div className="text-center py-8 text-muted-foreground">
+              No pending orders match the filter criteria.
+          </div>
+      )}
     </WorkflowStageShell>
   )
 }
