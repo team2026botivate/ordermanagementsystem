@@ -99,9 +99,18 @@ export default function Dashboard() {
   const [timeRange, setTimeRange] = useState("today") 
   const [history, setHistory] = useState<any[]>([])
   const [lastSync, setLastSync] = useState(new Date())
+  const [isMounted, setIsMounted] = useState(false)
   const [isPendingDialogOpen, setIsPendingDialogOpen] = useState(false)
+  const [isCompletedDialogOpen, setIsCompletedDialogOpen] = useState(false)
+  const [isDispatchDialogOpen, setIsDispatchDialogOpen] = useState(false)
+  const [isDamagesDialogOpen, setIsDamagesDialogOpen] = useState(false)
+  const [isInvoicesDialogOpen, setIsInvoicesDialogOpen] = useState(false)
+  const [isDelayedDialogOpen, setIsDelayedDialogOpen] = useState(false)
+  const [isRejectedDialogOpen, setIsRejectedDialogOpen] = useState(false)
+  const [isTotalDialogOpen, setIsTotalDialogOpen] = useState(false)
 
   useEffect(() => {
+    setIsMounted(true)
     const loadData = () => {
         try {
             const rawHistory = localStorage.getItem("workflowHistory")
@@ -131,236 +140,169 @@ export default function Dashboard() {
   // Process Data
   const stats = useMemo(() => {
     const normalize = (str: string) => (str || "").toLowerCase().replace(/[^a-z0-9]/g, "")
-    const getOrderId = (e: any) => e.soNumber || e.doNumber || e.orderNo
+    const getOrderId = (e: any) => e.doNumber || e.orderNo || e.soNumber
 
-    const latestOrderMap = new Map()
-    history.forEach((entry: any) => {
-        const id = entry.doNumber || entry.orderNo
+    // 1. Get Latest State for each unique Order
+    const latestOrderMap = new Map<string, any>()
+    
+    // Sort history by timestamp to ensure we process in order
+    const sortedHistory = [...history].sort((a, b) => 
+        new Date(a.timestamp || a.date).getTime() - new Date(b.timestamp || b.date).getTime()
+    )
+
+    sortedHistory.forEach((entry: any) => {
+        const id = getOrderId(entry)
         if (!id) return
+        
         const existing = latestOrderMap.get(id)
-        if (!existing || new Date(entry.timestamp || entry.date) > new Date(existing.timestamp || existing.date)) {
-            // Preserve orderType from existing entry if missing in new entry
-            const preservedType = entry.orderType || existing?.orderType
-            latestOrderMap.set(id, { ...entry, orderType: preservedType })
-        } else if (existing && !existing.orderType && entry.orderType) {
-            // If existing is newer but missing type, and older entry has it, update existing
-             latestOrderMap.set(id, { ...existing, orderType: entry.orderType })
-        }
+        
+        // Merge entries: keep record of all critical fields
+        latestOrderMap.set(id, {
+            ...existing,
+            ...entry,
+            // Preserve specific fields that might be missing in update entries
+            orderType: entry.orderType || existing?.orderType || "regular",
+            customerName: entry.customerName || existing?.customerName,
+            soNumber: entry.soNumber || existing?.soNumber,
+            doNumber: entry.doNumber || existing?.doNumber,
+        })
     })
 
-    const uniqueOrders = Array.from(latestOrderMap.values())
+    const allUniqueOrders = Array.from(latestOrderMap.values())
     
-    // Filter by time range
+    // Time Range Filtering
     const now = new Date()
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const startOfWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay())
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1)
     
-    const timeFilteredOrders = uniqueOrders.filter((order: any) => {
+    const timeFilteredOrders = allUniqueOrders.filter((order: any) => {
         const date = new Date(order.timestamp || order.date)
         if (timeRange === "today") return date >= startOfToday
         if (timeRange === "week") return date >= startOfWeek
         return date >= startOfMonth
     })
 
-    // Global stats (All Time)
-    const completedOrdersIds = new Set(
-        history.filter(e => 
-            (normalize(e.stage) === "materialreceipt" || normalize(e.stage) === "damageadjustment") && 
-            ["completed", "approved", "delivered", "ready"].includes((e.status || "").toLowerCase())
-        ).map(getOrderId)
-    )
+    // Helper to determine exact current stage of an order
+    const getCurrentStageInfo = (order: any) => {
+        const stage = order.stage
+        const status = (order.status || "").toLowerCase()
+        const stageIdx = STAGES.findIndex(s => normalize(s.id) === normalize(stage))
+        
+        if (status === "pending") {
+            return { current: stage, next: null, isCompleted: false }
+        } else if (["completed", "approved", "ready", "delivered"].includes(status)) {
+            // If it's the last stage, it's fully completed
+            if (stageIdx === STAGES.length - 1 || normalize(stage) === "finaldelivery" || normalize(stage) === "materialreceipt") {
+                return { current: "Final Delivery", next: null, isCompleted: true }
+            }
+            
+            // Move to next logical stage
+            let nextIdx = stageIdx + 1
+            
+            // Skip Pre-Approval for regular orders
+            if (nextIdx < STAGES.length && STAGES[nextIdx].id === "Pre-Approval" && order.orderType === "regular") {
+                nextIdx++
+            }
+            
+            return { 
+                current: STAGES[nextIdx]?.id || "Final Delivery", 
+                next: null, 
+                isCompleted: nextIdx >= STAGES.length 
+            }
+        }
+        
+        return { current: stage, next: null, isCompleted: status === "rejected" || status === "cancelled" }
+    }
 
-    const completed = completedOrdersIds.size
-    const pendingOrdersList = uniqueOrders.filter((o: any) => {
-        const id = getOrderId(o)
-        const isCompleted = completedOrdersIds.has(id)
-        const isCancelled = ["cancelled", "rejected"].includes((o.status || "").toLowerCase())
-        return !isCompleted && !isCancelled
+    // Calculate Global Totals
+    const activeOrders = timeFilteredOrders.filter(o => {
+        const info = getCurrentStageInfo(o)
+        const status = (o.status || "").toLowerCase()
+        return !info.isCompleted && status !== "rejected" && status !== "cancelled"
     })
-    const active = pendingOrdersList.length
-    const cancelled = uniqueOrders.filter((o: any) => ["cancelled", "rejected"].includes((o.status || "").toLowerCase())).length
-    
-    // Delayed logic: > 24 hours in same stage
-    const delayed = uniqueOrders.filter((o: any) => {
-        const lastUpdate = new Date(o.timestamp || o.date)
-        const diffHours = (now.getTime() - lastUpdate.getTime()) / (1000 * 60 * 60)
-        return diffHours > 24 && o.status !== "Delivered"
-    }).length
 
-    // Stage breakdown with real-ish data
-    const initialStageCounts = STAGES.map((s, idx) => {
+    const completedOrders = timeFilteredOrders.filter(o => getCurrentStageInfo(o).isCompleted)
+    const cancelledOrders = timeFilteredOrders.filter(o => ["rejected", "cancelled"].includes((o.status || "").toLowerCase()))
+
+    // Stage Breakdown
+    const stageCounts = STAGES.map((s, idx) => {
         const targetId = normalize(s.id)
         
-        const isInRange = (dateStr: string) => {
-            const date = new Date(dateStr)
-            if (timeRange === "today") return date >= startOfToday
-            if (timeRange === "week") return date >= startOfWeek
-            return date >= startOfMonth
-        }
+        // Count how many orders are CURRENTLY in this stage
+        const ordersInThisStage = timeFilteredOrders.filter(o => {
+            const info = getCurrentStageInfo(o)
+            return normalize(info.current) === targetId && (o.status || "").toLowerCase() !== "rejected"
+        })
 
-        // 1. All records that COMPLETED this stage
-        const completionsThisStage = history.filter(e => 
-            normalize(e.stage) === targetId && ["completed", "approved", "ready"].includes((e.status || "").toLowerCase())
-        )
+        // Count how many orders COMPLETED this stage in history (within time range)
+        const completedInHistory = history.filter(e => {
+            const info = { date: new Date(e.timestamp || e.date) }
+            let isInRange = false
+            if (timeRange === "today") isInRange = info.date >= startOfToday
+            else if (timeRange === "week") isInRange = info.date >= startOfWeek
+            else isInRange = info.date >= startOfMonth
 
-        // SUCCESS: Finished this stage in the time range
-        const successCount = new Set(completionsThisStage.filter(e => isInRange(e.timestamp || e.date)).map(getOrderId)).size
-        
-        // PENDING: Finished trigger stages but not this stage
-        let pendingCount = 0
-        if (s.id === "Order Punch") {
-            pendingCount = 0
-        } else {
-            const triggerIds = [normalize(STAGES[idx - 1]?.id)]
-            if (targetId === "approvaloforder") triggerIds.push("orderpunch")
-            if (targetId === "actualdispatch") triggerIds.push("dispatchmaterial", "dispatchplanning")
-            if (targetId === "materialload") triggerIds.push("vehicledetails", "actualdispatch")
+            return normalize(e.stage) === targetId && 
+                  ["completed", "approved", "ready", "delivered"].includes((e.status || "").toLowerCase()) &&
+                  isInRange
+        })
+        const completedCount = new Set(completedInHistory.map(getOrderId)).size
 
-            const finishedTrigger = history.filter(e => 
-                triggerIds.includes(normalize(e.stage)) && ["completed", "approved", "ready"].includes((e.status || "").toLowerCase())
-            )
-
-            const pendingIds = new Set()
-            finishedTrigger.forEach(t => {
-                const id = getOrderId(t)
-                const isFinished = completionsThisStage.some(c => getOrderId(c) === id)
-                
-                let skip = false
-                const type = (t.orderType || "").toLowerCase()
-                if (targetId === "preapproval" && !type.includes("pre")) skip = true
-                if (targetId === "approvaloforder" && normalize(t.stage) === "orderpunch" && type.includes("pre")) skip = true
-
-                if (!isFinished && !skip) pendingIds.add(id)
-            })
-            pendingCount = pendingIds.size
-        }
-
-        let breakdown = null
-        if (s.id === "Order Punch") {
-            const lowerType = (o: any) => (o.orderType || "").toLowerCase()
-            const preCount = timeFilteredOrders.filter(o => lowerType(o).includes("pre") && lowerType(o).includes("approval")).length
-            const regCount = timeFilteredOrders.filter(o => lowerType(o) === "regular").length
-            breakdown = { label1: "Pre-Approval", value1: preCount, label2: "Regular", value2: regCount, total: timeFilteredOrders.length }
-        }
-
-        const overdue = uniqueOrders.filter((o: any) => {
-            if (normalize(o.stage) !== targetId) return false
+        // Overdue logic (> 48h in current stage)
+        const overdue = ordersInThisStage.filter(o => {
             const hours = (now.getTime() - new Date(o.timestamp || o.date).getTime()) / 3600000
             return hours > 48
         }).length
 
-        return { ...s, count: pendingCount, pending: pendingCount, completed: successCount, overdue, breakdown }
-    })
-
-    const stageCounts = initialStageCounts.map(s => {
-        if (s.id === "Final Delivery") {
-            const receipt = initialStageCounts.find(sc => sc.id === "Material Receipt")
-            const damage = initialStageCounts.find(sc => sc.id === "Damage Adjustment")
-            return {
-                ...s,
-                completed: (receipt?.completed || 0) + (damage?.completed || 0)
-            }
+        // Special Breakdown for Order Punch
+        let breakdown = null
+        if (s.id === "Order Punch") {
+            const preCount = timeFilteredOrders.filter(o => (o.orderType || "").toLowerCase().includes("pre")).length
+            const regCount = timeFilteredOrders.filter(o => (o.orderType || "").toLowerCase() === "regular").length
+            breakdown = { label1: "Pre-Approval", value1: preCount, label2: "Regular", value2: regCount, total: timeFilteredOrders.length }
         }
-        return s
+
+        return {
+            ...s,
+            count: ordersInThisStage.length,
+            pending: ordersInThisStage.length,
+            completed: completedCount,
+            overdue,
+            breakdown
+        }
     })
 
-    // ... (rest of logic) ...
+    // Correct Final Delivery count based on completed orders
+    const finalDeliveryIdx = stageCounts.findIndex(s => s.id === "Final Delivery")
+    if (finalDeliveryIdx !== -1) {
+        stageCounts[finalDeliveryIdx].completed = completedOrders.length
+    }
 
-// ...
-
-function StageCard({ stage, totalOrders, onClick }: any) {
-    const percentage = totalOrders > 0 ? Math.round((stage.count / totalOrders) * 100) : 0
-    const totalInStage = stage.count 
-
-    return (
-        <div 
-            onClick={onClick}
-            className="flex flex-col p-6 rounded-3xl border-2 border-slate-50 bg-white hover:border-primary/20 hover:shadow-xl transition-all duration-300 group cursor-pointer relative overflow-hidden active:scale-95 h-full justify-between"
-        >
-            <div className="flex justify-between items-start mb-4">
-                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all duration-500 group-hover:scale-110 ${stage.bg} ${stage.color} shadow-sm`}>
-                    <stage.icon className="h-6 w-6" />
-                </div>
-                {stage.overdue > 0 && (
-                    <Badge variant="destructive" className="rounded-full px-2 py-0.5 h-6 text-[10px] flex items-center gap-1 animate-pulse">
-                         <AlertCircle className="h-3 w-3" /> {stage.overdue}
-                    </Badge>
-                )}
-            </div>
-            
-            <div className="mb-6 relative z-10 flex flex-col items-center text-center space-y-2">
-                <p className="text-xs font-bold uppercase tracking-widest text-slate-400 group-hover:text-primary/80 transition-colors w-full">{stage.label}</p>
-                <div className="flex items-center justify-center">
-                    <h3 className="text-4xl font-black text-slate-800 tracking-tighter">
-                        {stage.breakdown ? stage.breakdown.total : stage.count}
-                    </h3>
-                </div>
-            </div>
-
-            <div className="mt-auto space-y-2">
-                <div className="flex justify-around items-center bg-slate-50 rounded-lg p-2 border border-slate-100">
-                    {stage.breakdown ? (
-                        <>
-                             <div className="flex flex-col items-center">
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{stage.breakdown.label1}</span>
-                                <span className="text-sm font-black text-indigo-600">{stage.breakdown.value1}</span>
-                             </div>
-                             <div className="h-6 w-px bg-slate-200"></div>
-                             <div className="flex flex-col items-center">
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">{stage.breakdown.label2}</span>
-                                <span className="text-sm font-black text-blue-600">{stage.breakdown.value2}</span>
-                             </div>
-                        </>
-                    ) : (
-                        <>
-                             <div className="flex flex-col items-center">
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Success</span>
-                                <span className="text-sm font-black text-emerald-500">{stage.completed}</span>
-                             </div>
-                             <div className="h-6 w-px bg-slate-200"></div>
-                             <div className="flex flex-col items-center">
-                                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wide">Total</span>
-                                <span className="text-sm font-black text-blue-500">{totalInStage}</span>
-                             </div>
-                        </>
-                    )}
-                </div>
-
-            </div>
-        </div>
-    )
-}
-
-    // Today's Activity Snapshot
+    // Recent Activity Snapshots
     const activityToday = history.filter(h => {
         const d = new Date(h.timestamp || h.date)
         return d.toDateString() === now.toDateString()
     })
-    
-    const createdToday = activityToday.filter(h => h.stage === "Order Punch").length
-    const dispatchedToday = activityToday.filter(h => h.stage === "Actual Dispatch").length
-    const invoicedToday = activityToday.filter(h => h.stage === "Make Invoice").length
-    const deliveredToday = activityToday.filter(h => h.status === "Delivered").length
 
-    // Attention Needed Items
-    const attentionItems = uniqueOrders
-        .filter(o => o.status === "Rejected" || o.status === "Damaged" || ((now.getTime() - new Date(o.timestamp || o.date).getTime()) / 3600000 > 12 && o.status !== "Delivered"))
+    const attentionItems = timeFilteredOrders
+        .filter(o => {
+            const status = (o.status || "").toLowerCase()
+            const hours = (now.getTime() - new Date(o.timestamp || o.date).getTime()) / 3600000
+            return status === "rejected" || status === "damaged" || (hours > 24 && !getCurrentStageInfo(o).isCompleted)
+        })
         .sort((a, b) => new Date(a.timestamp || a.date).getTime() - new Date(b.timestamp || b.date).getTime())
         .slice(0, 10)
 
-    // Recent orders tracker
-    const recentOrders = uniqueOrders
+    const recentOrders = timeFilteredOrders
         .sort((a, b) => new Date(b.timestamp || b.date).getTime() - new Date(a.timestamp || a.date).getTime())
         .slice(0, 8)
 
-    // Chart Data
-    const chartData = stageCounts.map(s => ({ name: s.label, count: s.count }))
-    
     // Timeline Data (Weekly Mon-Sun)
     const currentDay = now.getDay()
     const diffToMonday = currentDay === 0 ? 6 : currentDay - 1
     const monday = new Date(now)
+    monday.setHours(0, 0, 0, 0)
     monday.setDate(now.getDate() - diffToMonday)
     
     const weeklyData = Array.from({ length: 7 }, (_, i) => {
@@ -377,22 +319,31 @@ function StageCard({ stage, totalOrders, onClick }: any) {
 
     return {
         total: timeFilteredOrders.length,
-        active,
-        completed,
-        delayed,
-        cancelled,
+        active: activeOrders.length,
+        completed: completedOrders.length,
+        delayed: attentionItems.length,
+        cancelled: cancelledOrders.length,
         stageCounts,
         attentionItems,
         recentOrders,
-        createdToday,
-        dispatchedToday,
-        invoicedToday,
-        deliveredToday,
-        chartData,
+        createdToday: activityToday.filter(h => normalize(h.stage) === "orderpunch").length,
+        dispatchedToday: activityToday.filter(h => normalize(h.stage) === "actualdispatch" && ["completed", "approved"].includes((h.status || "").toLowerCase())).length,
+        invoicedToday: activityToday.filter(h => normalize(h.stage) === "makeinvoice").length,
+        deliveredToday: activityToday.filter(h => (h.status || "").toLowerCase() === "delivered" || normalize(h.stage) === "materialreceipt").length,
+        chartData: stageCounts.map(s => ({ name: s.label, count: s.count })),
         timelineData: weeklyData,
-        pendingOrdersList
+        pendingOrdersList: activeOrders,
+        completedOrdersList: completedOrders,
+        dispatchPlanningList: activeOrders.filter(o => normalize(getCurrentStageInfo(o).current) === "dispatchplanning"),
+        damagesOrdersList: timeFilteredOrders.filter(o => (o.status || "").toLowerCase() === "damaged" || normalize(o.stage) === "damageadjustment"),
+        invoicesOrdersList: activeOrders.filter(o => ["makeinvoice", "checkinvoice"].includes(normalize(getCurrentStageInfo(o).current))),
+        delayedOrdersList: attentionItems,
+        cancelledOrdersList: cancelledOrders,
+        totalOrdersList: timeFilteredOrders
     }
   }, [history, timeRange])
+
+
 
   // Component logic
   const visibleStages = useMemo(() => {
@@ -426,7 +377,9 @@ function StageCard({ stage, totalOrders, onClick }: any) {
           <p className="text-base text-slate-500 font-medium flex items-center gap-2">
             OMS Enterprise Operational Overview
             <span className="h-4 w-px bg-slate-200 mx-1" />
-            <span className="text-slate-400 text-sm">Last Synced: {lastSync.toLocaleTimeString()}</span>
+            <span className="text-slate-400 text-sm" suppressHydrationWarning>
+                Last Synced: {isMounted ? lastSync.toLocaleTimeString() : "--:--:--"}
+            </span>
           </p>
         </div>
         
@@ -543,7 +496,10 @@ function StageCard({ stage, totalOrders, onClick }: any) {
                         </div>
 
                         {/* Complete Order Card */}
-                        <div className="bg-emerald-50/50 rounded-2xl p-5 border border-emerald-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-default min-h-[160px]">
+                        <div 
+                            onClick={() => setIsCompletedDialogOpen(true)}
+                            className="bg-emerald-50/50 rounded-2xl p-5 border border-emerald-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-pointer min-h-[160px]"
+                        >
                             <div className="flex justify-between items-start">
                                 <div className="p-2.5 bg-white rounded-xl shadow-sm border border-emerald-200">
                                     <CheckCircle2 className="h-5 w-5 text-emerald-600" />
@@ -557,7 +513,10 @@ function StageCard({ stage, totalOrders, onClick }: any) {
                         </div>
 
                         {/* Dispatch Planning Card */}
-                        <div className="bg-indigo-50/50 rounded-2xl p-5 border border-indigo-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-default min-h-[160px]">
+                        <div 
+                            onClick={() => setIsDispatchDialogOpen(true)}
+                            className="bg-indigo-50/50 rounded-2xl p-5 border border-indigo-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-pointer min-h-[160px]"
+                        >
                             <div className="flex justify-between items-start">
                                 <div className="p-2.5 bg-white rounded-xl shadow-sm border border-indigo-200">
                                     <Layers className="h-5 w-5 text-indigo-600" />
@@ -587,7 +546,10 @@ function StageCard({ stage, totalOrders, onClick }: any) {
                         </div>
 
                         {/* Damages Card */}
-                        <div className="bg-rose-50/50 rounded-2xl p-5 border border-rose-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-default min-h-[160px]">
+                        <div 
+                            onClick={() => setIsDamagesDialogOpen(true)}
+                            className="bg-rose-50/50 rounded-2xl p-5 border border-rose-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-pointer min-h-[160px]"
+                        >
                             <div className="flex justify-between items-start">
                                 <div className="p-2.5 bg-white rounded-xl shadow-sm border border-rose-200">
                                     <AlertTriangle className="h-5 w-5 text-rose-600" />
@@ -603,18 +565,21 @@ function StageCard({ stage, totalOrders, onClick }: any) {
                         </div>
 
                         {/* Payments Card */}
-                        <div className="bg-violet-50/50 rounded-2xl p-5 border border-violet-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-default min-h-[160px]">
+                        <div 
+                            onClick={() => setIsInvoicesDialogOpen(true)}
+                            className="bg-violet-50/50 rounded-2xl p-5 border border-violet-100 flex flex-col justify-between hover:shadow-lg transition-all cursor-pointer min-h-[160px]"
+                        >
                             <div className="flex justify-between items-start">
                                 <div className="p-2.5 bg-white rounded-xl shadow-sm border border-violet-200">
                                     <FileText className="h-5 w-5 text-violet-600" />
                                 </div>
-                                <Badge variant="outline" className="text-[10px] font-black uppercase text-violet-700 bg-violet-100/50 border-violet-200 px-2 py-0.5">Finance</Badge>
+                                <Badge variant="outline" className="text-[10px] font-black uppercase text-violet-700 bg-violet-100/50 border-violet-200 px-2 py-0.5">Payment</Badge>
                             </div>
                             <div>
                                 <h4 className="text-4xl font-black text-slate-800 tracking-tighter">
                                     {stats.stageCounts.find(s => s.id === "Make Invoice")?.completed || 0}
                                 </h4>
-                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Total Invoices</p>
+                                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">Total Payment</p>
                             </div>
                         </div>
                     </div>
@@ -701,7 +666,7 @@ function StageCard({ stage, totalOrders, onClick }: any) {
                                             </div>
                                         </TableCell>
                                         <TableCell className="pr-8 text-right">
-                                            <span className="text-sm font-medium text-slate-500">
+                                            <span className="text-sm font-medium text-slate-500" suppressHydrationWarning>
                                                 {formatTime(order.timestamp || order.date)}
                                             </span>
                                         </TableCell>
@@ -792,92 +757,86 @@ function StageCard({ stage, totalOrders, onClick }: any) {
 
       </div>
 
-      {/* Pending Orders List Popup */}
       <Dialog open={isPendingDialogOpen} onOpenChange={setIsPendingDialogOpen}>
-        <DialogContent className="max-w-[750px] p-0 overflow-hidden rounded-3xl border border-blue-100 shadow-2xl bg-white">
-            <DialogHeader className="p-6 pb-4 flex flex-row items-center justify-between border-b border-blue-50 bg-slate-50/30">
-                <div className="space-y-1">
-                    <DialogTitle className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
-                        <div className="p-2 bg-primary rounded-xl shadow-lg shadow-primary/20">
-                            <Activity className="h-4 w-4 text-white" />
-                        </div>
-                        Pending Orders
-                    </DialogTitle>
-                </div>
-                <div className="flex items-center gap-4 mr-4">
-                    <div className="px-4 py-2 rounded-2xl bg-blue-50/50 border border-blue-100/50 flex items-center gap-3">
-                         <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest leading-none">Total Active</span>
-                            <span className="text-lg font-black text-primary leading-none mt-1">{stats.pendingOrdersList.length}</span>
-                         </div>
-                         <Package className="h-4 w-4 text-primary/60" />
-                    </div>
-                </div>
-            </DialogHeader>
+        <OrderListPopup 
+            title="Pending Orders" 
+            icon={<Activity className="h-4 w-4 text-white" />}
+            orders={stats.pendingOrdersList}
+            colorClass="bg-primary"
+            showStage={true}
+            onClose={() => setIsPendingDialogOpen(false)}
+        />
+      </Dialog>
 
-            <div className="p-0">
-                <ScrollArea className="h-[350px]">
-                    <div className="w-full">
-                        <Table>
-                            <TableHeader className="bg-blue-50/30 sticky top-0 z-10 backdrop-blur-sm">
-                                <TableRow className="border-b border-blue-100/30">
-                                    <TableHead className="pl-6 py-3 text-[9px] font-black uppercase text-blue-600/60 tracking-wider w-1/3">Order Number</TableHead>
-                                    <TableHead className="py-3 text-[9px] font-black uppercase text-blue-600/60 tracking-wider w-1/3 text-center">Customer Name</TableHead>
-                                    <TableHead className="pr-6 py-3 text-[9px] font-black uppercase text-blue-600/60 tracking-wider text-right w-1/3">Current Stage</TableHead>
-                                </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                                {stats.pendingOrdersList.map((order: any, i: number) => {
-                                    const stageInfo = STAGES.find(s => s.id === order.stage) || STAGES[0]
-                                    // Priorities SO Number for consistent format
-                                    const displayOrderNo = order.soNumber || order.doNumber || order.orderNo || "N/A"
-                                    
-                                    return (
-                                        <TableRow 
-                                            key={i} 
-                                            className="group hover:bg-blue-50/20 transition-all border-b border-slate-50/50 cursor-pointer"
-                                            onClick={() => {
-                                                const stageUrl = STAGES.find(s => s.id === order.stage)?.url || "/"
-                                                router.push(stageUrl)
-                                                setIsPendingDialogOpen(false)
-                                            }}
-                                        >
-                                            <TableCell className="pl-6 py-4">
-                                                <div className="flex flex-col">
-                                                    <span className="font-extrabold text-slate-950 text-[13px] tracking-tight group-hover:text-primary transition-colors">{displayOrderNo}</span>
-                                                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter">Registered Order</span>
-                                                </div>
-                                            </TableCell>
-                                            <TableCell className="py-4 text-center">
-                                                <span className="text-[13px] text-slate-700 font-bold tracking-tight">{order.customerName || "External Client"}</span>
-                                            </TableCell>
-                                            <TableCell className="pr-6 py-4 text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <div className={`w-1.5 h-1.5 rounded-full ${stageInfo.color.replace('text-', 'bg-')} shadow-[0_0_6px_rgba(59,130,246,0.2)]`} />
-                                                    <span className={`${stageInfo.color} font-black text-[9px] uppercase tracking-wider`}>
-                                                        {order.stage}
-                                                    </span>
-                                                </div>
-                                            </TableCell>
-                                        </TableRow>
-                                    )
-                                })}
-                                {stats.pendingOrdersList.length === 0 && (
-                                    <TableRow>
-                                        <TableCell colSpan={3} className="text-center py-20">
-                                            <div className="flex flex-col items-center gap-3 opacity-20">
-                                                <Package className="h-10 w-10 text-blue-200" />
-                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">No Active Orders</p>
-                                            </div>
-                                        </TableCell>
-                                    </TableRow>
-                                )}
-                            </TableBody>
-                        </Table>
-                    </div>
-                </ScrollArea>
-            </div>
-        </DialogContent>
+      <Dialog open={isCompletedDialogOpen} onOpenChange={setIsCompletedDialogOpen}>
+        <OrderListPopup 
+            title="Completed Orders" 
+            icon={<CheckCircle2 className="h-4 w-4 text-white" />}
+            orders={stats.completedOrdersList}
+            colorClass="bg-emerald-500"
+            hideTypeSubtext={true}
+            onClose={() => setIsCompletedDialogOpen(false)}
+        />
+      </Dialog>
+
+      <Dialog open={isDispatchDialogOpen} onOpenChange={setIsDispatchDialogOpen}>
+        <OrderListPopup 
+            title="Dispatch Planning" 
+            icon={<Layers className="h-4 w-4 text-white" />}
+            orders={stats.dispatchPlanningList}
+            colorClass="bg-indigo-500"
+            onClose={() => setIsDispatchDialogOpen(false)}
+        />
+      </Dialog>
+
+      <Dialog open={isDamagesDialogOpen} onOpenChange={setIsDamagesDialogOpen}>
+        <OrderListPopup 
+            title="Damaged Orders" 
+            icon={<AlertTriangle className="h-4 w-4 text-white" />}
+            orders={stats.damagesOrdersList}
+            colorClass="bg-rose-500"
+            onClose={() => setIsDamagesDialogOpen(false)}
+        />
+      </Dialog>
+
+      <Dialog open={isInvoicesDialogOpen} onOpenChange={setIsInvoicesDialogOpen}>
+        <OrderListPopup 
+            title="Invoice Tracking" 
+            icon={<FileText className="h-4 w-4 text-white" />}
+            orders={stats.invoicesOrdersList}
+            colorClass="bg-violet-500"
+            onClose={() => setIsInvoicesDialogOpen(false)}
+        />
+      </Dialog>
+
+      <Dialog open={isDelayedDialogOpen} onOpenChange={setIsDelayedDialogOpen}>
+        <OrderListPopup 
+            title="Delayed Orders" 
+            icon={<AlertTriangle className="h-4 w-4 text-white" />}
+            orders={stats.delayedOrdersList}
+            colorClass="bg-rose-500"
+            onClose={() => setIsDelayedDialogOpen(false)}
+        />
+      </Dialog>
+
+      <Dialog open={isRejectedDialogOpen} onOpenChange={setIsRejectedDialogOpen}>
+        <OrderListPopup 
+            title="Rejected Orders" 
+            icon={<XCircle className="h-4 w-4 text-white" />}
+            orders={stats.cancelledOrdersList}
+            colorClass="bg-slate-500"
+            onClose={() => setIsRejectedDialogOpen(false)}
+        />
+      </Dialog>
+
+      <Dialog open={isTotalDialogOpen} onOpenChange={setIsTotalDialogOpen}>
+        <OrderListPopup 
+            title="All Orders" 
+            icon={<Package className="h-4 w-4 text-white" />}
+            orders={stats.totalOrdersList}
+            colorClass="bg-indigo-500"
+            onClose={() => setIsTotalDialogOpen(false)}
+        />
       </Dialog>
 
       <div className="flex items-center justify-center pt-12 border-t border-slate-100 opacity-100">
@@ -1032,6 +991,114 @@ const calculateDelay = (isoString?: string) => {
     const hours = (new Date().getTime() - date.getTime()) / 3600000
     if (hours < 1) return `${Math.floor(hours * 60)}m`
     return `${Math.floor(hours)}h`
+}
+
+function OrderListPopup({ title, icon, orders, colorClass, onClose, showStage = false, hideTypeSubtext = false }: any) {
+    const router = useRouter()
+    return (
+        <DialogContent className="max-w-[750px] p-0 overflow-hidden rounded-3xl border border-blue-100 shadow-2xl bg-white">
+            <DialogHeader className="p-6 pb-4 flex flex-row items-center justify-between border-b border-blue-50 bg-slate-50/30">
+                <div className="space-y-1">
+                    <DialogTitle className="text-xl font-black text-slate-900 flex items-center gap-3 tracking-tight">
+                        <div className={`p-2 ${colorClass} rounded-xl shadow-lg`}>
+                            {icon}
+                        </div>
+                        {title}
+                    </DialogTitle>
+                </div>
+                <div className="flex items-center gap-4 mr-4">
+                    <div className="px-4 py-2 rounded-2xl bg-blue-50/50 border border-blue-100/50 flex items-center gap-3">
+                         <div className="flex flex-col">
+                            <span className="text-[8px] font-black text-blue-400 uppercase tracking-widest leading-none">Total Items</span>
+                            <span className="text-lg font-black text-primary leading-none mt-1">{orders.length}</span>
+                         </div>
+                         <Package className="h-4 w-4 text-primary/60" />
+                    </div>
+                </div>
+            </DialogHeader>
+
+            <div className="p-0">
+                <ScrollArea className="h-[350px]">
+                    <div className="w-full">
+                        <Table>
+                            <TableHeader className="bg-blue-50/30 sticky top-0 z-10 backdrop-blur-sm">
+                                <TableRow className="border-b border-blue-100/30">
+                                    <TableHead className="pl-6 py-3 text-[9px] font-black uppercase text-blue-600/60 tracking-wider w-1/3">Order Number</TableHead>
+                                    <TableHead className="py-3 text-[9px] font-black uppercase text-blue-600/60 tracking-wider w-[30%] text-center">Customer Name</TableHead>
+                                    <TableHead className="pr-6 py-3 text-[9px] font-black uppercase text-blue-600/60 tracking-wider text-right w-[36%]">
+                                        {showStage ? "Current Stage" : "Order Type"}
+                                    </TableHead>
+                                </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {orders.map((order: any, i: number) => {
+                                    const stageInfo = STAGES.find(s => s.id === order.stage) || STAGES[0]
+                                    const displayOrderNo = order.soNumber || order.doNumber || order.orderNo || "N/A"
+                                    const rawType = (order.orderType || "").toLowerCase()
+                                    const isPreApproval = rawType.includes("pre") && rawType.includes("approval")
+                                    const typeLabel = isPreApproval ? "Pre-Approval" : "Regular"
+                                    
+                                    return (
+                                        <TableRow 
+                                            key={i} 
+                                            className="group hover:bg-blue-50/20 transition-all border-b border-slate-50/50 cursor-pointer"
+                                            onClick={() => {
+                                                const stageUrl = STAGES.find(s => s.id === order.stage)?.url || "/"
+                                                router.push(stageUrl)
+                                                onClose()
+                                            }}
+                                        >
+                                            <TableCell className="pl-6 py-4">
+                                                <div className="flex flex-col">
+                                                    <span className="font-extrabold text-slate-950 text-[13px] tracking-tight group-hover:text-primary transition-colors">{displayOrderNo}</span>
+                                                    {!hideTypeSubtext && (
+                                                        <span className={`text-[9px] font-bold uppercase tracking-tight ${isPreApproval ? 'text-indigo-500' : 'text-slate-400'}`}>
+                                                            {typeLabel}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </TableCell>
+                                            <TableCell className="py-4 text-center">
+                                                <span className="text-[13px] text-slate-700 font-bold tracking-tight">{order.customerName || "External Client"}</span>
+                                            </TableCell>
+                                            <TableCell className="pr-6 py-4 text-right">
+                                                {showStage ? (
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        <div className={`w-1.5 h-1.5 rounded-full ${stageInfo.color.replace('text-', 'bg-')} shadow-[0_0_6px_rgba(59,130,246,0.2)]`} />
+                                                        <span className={`${stageInfo.color} font-black text-[9px] uppercase tracking-wider`}>
+                                                            {order.stage}
+                                                        </span>
+                                                    </div>
+                                                ) : (
+                                                    <span className={`text-[10px] font-black uppercase tracking-wider ${
+                                                        isPreApproval 
+                                                        ? 'text-indigo-600' 
+                                                        : 'text-slate-500'
+                                                    }`}>
+                                                        {typeLabel}
+                                                    </span>
+                                                )}
+                                            </TableCell>
+                                        </TableRow>
+                                    )
+                                })}
+                                {orders.length === 0 && (
+                                    <TableRow>
+                                        <TableCell colSpan={3} className="text-center py-20">
+                                            <div className="flex flex-col items-center gap-3 opacity-20">
+                                                <Package className="h-10 w-10 text-blue-200" />
+                                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">No Items Found</p>
+                                            </div>
+                                        </TableCell>
+                                    </TableRow>
+                                )}
+                            </TableBody>
+                        </Table>
+                    </div>
+                </ScrollArea>
+            </div>
+        </DialogContent>
+    )
 }
 
 import { Plus } from "lucide-react"

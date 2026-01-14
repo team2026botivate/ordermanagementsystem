@@ -85,7 +85,8 @@ export default function VehicleDetailsPage() {
       }
 
       const historyEntry = {
-        orderNo: order.orderNo,
+        ...order,
+        orderNo: order.orderNo || order.doNumber || "DO-XXX",
         customerName: order.customerName,
         stage: "Vehicle Details",
         status: "Completed",

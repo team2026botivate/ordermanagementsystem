@@ -28,6 +28,23 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Settings2, Loader2 } from "lucide-react"
 import { useState, useEffect } from "react"
+import { saveWorkflowHistory } from "@/lib/storage-utils"
+import { SKU_MASTER } from "@/lib/master-data"
+import { Check, ChevronsUpDown, Search } from "lucide-react"
+import { cn } from "@/lib/utils"
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 
 
 
@@ -76,6 +93,13 @@ export default function PreApprovalPage() {
   const [overallRemark, setOverallRemark] = useState("")
 
   const [history, setHistory] = useState<any[]>([])
+  const [skuMaster] = useState<string[]>(() => 
+    SKU_MASTER
+      .filter(sku => sku.status === "Active")
+      .map(sku => sku.skuName)
+  )
+  const [skuSearch, setSkuSearch] = useState("")
+
 
   useEffect(() => {
     // 1. Load History
@@ -148,26 +172,23 @@ export default function PreApprovalPage() {
         approvedAt: new Date().toISOString(),
         status: "approved",
       }
-      localStorage.setItem("preApprovalData", JSON.stringify(preApprovalSubmit))
-
+      
+      // Centralized Storage Update
       const historyEntry = {
-        orderNo: targetOrder?.doNumber || "DO-XXXA", // Use doNumber
+        orderNo: targetOrder?.doNumber || "DO-XXXA",
         customerName: targetOrder?.customerName || "Unknown",
         stage: "Pre-Approval",
-        status: "Completed",
+        status: "Completed" as const,
         processedBy: "Current User",
         timestamp: new Date().toISOString(),
-        date: new Date().toLocaleDateString("en-GB"),
         remarks: overallRemark || "-",
         data: preApprovalSubmit,
-        productCount: targetOrder?.products?.length || 0,
+        orderType: targetOrder.orderType || "pre-approval"
       }
+      
+      saveWorkflowHistory(historyEntry)
 
-      const existingHistory = localStorage.getItem("workflowHistory")
-      const history = existingHistory ? JSON.parse(existingHistory) : []
-      history.push(historyEntry)
-      localStorage.setItem("workflowHistory", JSON.stringify(history))
-
+      localStorage.setItem("preApprovalData", JSON.stringify(preApprovalSubmit))
       localStorage.setItem(
         "commitmentReviewData",
         JSON.stringify({
@@ -312,14 +333,20 @@ export default function PreApprovalPage() {
                   </TableCell>
                 </TableRow>
               ) : filteredPendingOrders.map((rawOrder, i) => {
-                const row = {
+                  const CUSTOMER_MAP: Record<string, string> = {
+                    cust1: "Acme Corp",
+                    cust2: "Global Industries",
+                    cust3: "Zenith Supply",
+                  }
+                  
+                  const row = {
                    orderNo: rawOrder.doNumber || rawOrder.orderNo || "DO-XXXA",
                    deliveryPurpose: rawOrder.orderPurpose || "Week On Week",
                    customerType: rawOrder.customerType || "Existing",
                    orderType: rawOrder.orderType || "Regular",
                    soNo: rawOrder.soNumber || "DO-882",
                    partySoDate: rawOrder.soDate || "2024-03-21",
-                   customerName: rawOrder.customerName || "Acme Corp",
+                   customerName: CUSTOMER_MAP[rawOrder.customerName] || rawOrder.customerName || "Acme Corp",
                    // Handle new date fields
                    startDate: rawOrder.startDate || "—",
                    endDate: rawOrder.endDate || "—",
@@ -363,101 +390,210 @@ export default function PreApprovalPage() {
                           Process
                         </Button>
                       </DialogTrigger>
-                      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                        <DialogHeader>
-                          <DialogTitle>Pre-Approval Form: {row.orderNo}</DialogTitle>
-                          <DialogDescription>Set required rates and remarks for each product item.</DialogDescription>
+                        <DialogContent className="sm:max-w-6xl !max-w-6xl max-h-[95vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                        <DialogHeader className="border-b pb-4">
+                          <DialogTitle className="text-xl font-bold text-slate-900 leading-none">Pre-Approval Form: {row.orderNo}</DialogTitle>
+                          <DialogDescription className="text-slate-500 mt-1.5">Review product details, set required rates, and provide final remarks.</DialogDescription>
                         </DialogHeader>
-                        <div className="grid gap-6 py-4">
+                        
+                        {/* Order Summary Section */}
+                        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm mt-4">
+                            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-y-6 gap-x-8">
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Party Name</Label>
+                                    <p className="text-sm font-bold text-slate-900 leading-tight">{row.customerName}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Date</Label>
+                                    <p className="text-sm font-medium text-slate-700">{row.partySoDate}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Type</Label>
+                                    <p className="text-sm font-medium text-slate-700">{row.orderType}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Delivery Date</Label>
+                                    <p className="text-sm font-medium text-slate-700">{row.deliveryDate}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">WhatsApp No.</Label>
+                                    <p className="text-sm font-medium text-green-600 font-mono">{row.whatsapp || "—"}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Broker Name</Label>
+                                    <p className="text-sm font-medium text-slate-700">{row.brokerName || "Direct"}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Customer Type</Label>
+                                    <p className="text-sm font-medium text-slate-700 capitalize">{row.customerType}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Transport Type</Label>
+                                    <p className="text-sm font-medium text-slate-700 capitalize">{row.transportType}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Payment Terms</Label>
+                                    <p className="text-sm font-medium text-slate-700">{row.paymentTerms}</p>
+                                </div>
+                                
+                            </div>
+                        </div>
+
+                        <div className="py-6 space-y-8">
+                          {/* Products List */}
                           <div className="space-y-4">
+                            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 px-1 uppercase tracking-tight">
+                              <div className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                              Product List
+                            </h3>
                             {row.products && row.products.length > 0 ? (
                               row.products.map((product: any) => (
-                                <div key={product.id} className="border p-4 rounded-lg bg-muted/20">
-                                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                                    <div className="space-y-2 pb-1.5">
-                                      <Label className="text-xs font-medium text-muted-foreground">Oil Type</Label>
-                                      <p className="text-sm font-bold text-primary">
-                                        {product.oilType || product.productName || "—"}
-                                      </p>
-                                    </div>
-                                    
-                                    <div className="space-y-1.5">
-                                      <Label className="text-xs font-medium text-muted-foreground">SKU Name</Label>
-                                      <Input
-                                        className="h-9 bg-background"
-                                        placeholder="Enter SKU"
-                                        value={productRates[product.id]?.skuName || ""}
-                                        onChange={(e) =>
-                                          setProductRates({
-                                            ...productRates,
-                                            [product.id]: {
-                                              ...productRates[product.id],
-                                              skuName: e.target.value,
-                                            },
-                                          })
-                                        }
-                                      />
-                                    </div>
+                                  <div key={product.id} className="border border-slate-200 p-5 rounded-xl bg-white shadow-sm hover:border-blue-200 transition-colors space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+                                      {/* Oil Type */}
+                                      <div className="md:col-span-2 space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-slate-500">Oil Type</Label>
+                                        <div className="h-10 flex items-center border rounded-lg px-3 bg-slate-50/50">
+                                          <p className="text-sm font-bold text-blue-700 truncate">
+                                            {product.oilType || product.productName || "—"}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* SKU Name */}
+                                      <div className="md:col-span-4 space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-slate-500">SKU Name</Label>
+                                        <Popover>
+                                          <PopoverTrigger asChild>
+                                            <Button
+                                              variant="outline"
+                                              role="combobox"
+                                              className={cn(
+                                                "h-10 w-full justify-between bg-white px-3 font-normal border-slate-200 hover:bg-slate-50 transition-colors text-sm",
+                                                !productRates[product.id]?.skuName && "text-muted-foreground"
+                                              )}
+                                            >
+                                              <span className="truncate">{productRates[product.id]?.skuName || "Select SKU.."}</span>
+                                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                                            </Button>
+                                          </PopoverTrigger>
+                                          <PopoverContent className="w-[500px] p-0 shadow-xl border-slate-200" align="start">
+                                            <Command shouldFilter={false}>
+                                              <CommandInput 
+                                                  placeholder="Search SKU..." 
+                                                  value={skuSearch}
+                                                  onValueChange={setSkuSearch}
+                                                  className="h-11 border-none focus:ring-0"
+                                              />
+                                              <CommandList 
+                                                className="max-h-[300px] overflow-y-auto"
+                                                onWheel={(e) => e.stopPropagation()}
+                                              >
+                                                {skuMaster.filter(s => s.toLowerCase().includes(skuSearch.toLowerCase())).length === 0 && (
+                                                  <CommandEmpty className="py-8 text-sm text-slate-500 text-center font-medium">No SKU found matching "{skuSearch}"</CommandEmpty>
+                                                )}
+                                                <CommandGroup>
+                                                  {skuMaster
+                                                    .filter(sku => sku.toLowerCase().includes(skuSearch.toLowerCase()))
+                                                    .map((sku) => (
+                                                    <CommandItem
+                                                      key={sku}
+                                                      value={sku}
+                                                      className="cursor-pointer py-2.5 px-4"
+                                                      onSelect={() => {
+                                                        setProductRates({
+                                                          ...productRates,
+                                                          [product.id]: {
+                                                            ...productRates[product.id],
+                                                            skuName: sku,
+                                                          },
+                                                        })
+                                                        setSkuSearch("")
+                                                      }}
+                                                    >
+                                                      <Check
+                                                        className={cn(
+                                                          "mr-2 h-4 w-4 text-blue-600",
+                                                          productRates[product.id]?.skuName === sku
+                                                            ? "opacity-100"
+                                                            : "opacity-0"
+                                                        )}
+                                                      />
+                                                      {sku}
+                                                    </CommandItem>
+                                                  ))}
+                                                </CommandGroup>
+                                              </CommandList>
+                                            </Command>
+                                          </PopoverContent>
+                                        </Popover>
+                                      </div>
 
-                                    <div className="space-y-1.5">
-                                      <Label className="text-xs font-medium text-muted-foreground">Approval Qty</Label>
-                                      <Input
-                                        className="h-9 bg-background"
-                                        type="number"
-                                        placeholder="-505-"
-                                        value={productRates[product.id]?.approvalQty || ""}
-                                        onChange={(e) =>
-                                          setProductRates({
-                                            ...productRates,
-                                            [product.id]: {
-                                              ...productRates[product.id],
-                                              approvalQty: e.target.value,
-                                            },
-                                          })
-                                        }
-                                      />
-                                    </div>
+                                      {/* Approval Qty */}
+                                      <div className="md:col-span-3 space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-slate-500">Approval Qty</Label>
+                                        <Input
+                                          className="h-10 bg-white border-slate-200 focus:bg-white focus:border-blue-300 focus:ring-blue-100 transition-all text-sm"
+                                          type="number"
+                                          placeholder="Enter Qty"
+                                          value={productRates[product.id]?.approvalQty || ""}
+                                          onChange={(e) =>
+                                            setProductRates({
+                                              ...productRates,
+                                              [product.id]: {
+                                                ...productRates[product.id],
+                                                approvalQty: e.target.value,
+                                              },
+                                            })
+                                          }
+                                        />
+                                      </div>
 
-                                    <div className="space-y-1.5">
-                                      <Label className="text-xs font-medium text-muted-foreground">Required Rate</Label>
-                                      <Input
-                                        className={`h-9 bg-background ${
-                                          (parseFloat(productRates[product.id]?.rate || "0") < parseFloat(productRates[product.id]?.approvalQty || "0")) && productRates[product.id]?.rate
-                                            ? "text-red-600" 
-                                            : ""
-                                        }`}
-                                        type="number"
-                                        placeholder="Rate"
-                                        value={productRates[product.id]?.rate || ""}
-                                        onChange={(e) =>
-                                          setProductRates({
-                                            ...productRates,
-                                            [product.id]: {
-                                              ...productRates[product.id],
-                                              rate: e.target.value,
-                                            },
-                                          })
-                                        }
-                                      />
+                                      {/* Required Rate */}
+                                      <div className="md:col-span-3 space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-slate-500">Required Rate</Label>
+                                        <Input
+                                          className={cn(
+                                            "h-10 bg-white border-slate-200 focus:bg-white focus:border-blue-300 focus:ring-blue-100 transition-all text-sm font-semibold",
+                                            (parseFloat(productRates[product.id]?.rate || "0") < parseFloat(productRates[product.id]?.approvalQty || "0")) && productRates[product.id]?.rate
+                                              ? "text-red-600 font-bold border-red-200 bg-red-50 focus:bg-red-50" 
+                                              : "text-slate-900"
+                                          )}
+                                          type="number"
+                                          placeholder="Enter Rate"
+                                          value={productRates[product.id]?.rate || ""}
+                                          onChange={(e) =>
+                                            setProductRates({
+                                              ...productRates,
+                                              [product.id]: {
+                                                ...productRates[product.id],
+                                                rate: e.target.value,
+                                              },
+                                            })
+                                          }
+                                        />
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
                               ))
                             ) : (
-                              <div className="text-muted-foreground text-sm py-4">No products added</div>
+                              <div className="text-muted-foreground text-sm py-10 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">No products added for this order</div>
                             )}
                           </div>
-                          <div className="space-y-2">
-                            <Label>Overall Stage Remark</Label>
+
+                          {/* Remarks Section */}
+                          <div className="space-y-2 px-1">
+                            <Label className="text-sm font-bold text-slate-700 uppercase tracking-tight">Remarks</Label>
                             <Textarea
-                              placeholder="Type any general feedback here..."
+                              placeholder="Enter internal remarks..."
+                              className="min-h-[80px] bg-white border-slate-200 focus:border-blue-300 focus:ring-blue-100"
                               value={overallRemark}
                               onChange={(e) => setOverallRemark(e.target.value)}
                             />
                           </div>
                         </div>
-                          <DialogFooter>
-                            <Button variant="ghost" className="mr-auto">
+                          <DialogFooter className="sm:justify-center gap-3 border-t pt-4">
+                            <Button variant="ghost" className="min-w-[150px] font-semibold text-slate-500 hover:text-red-600 hover:bg-red-50 transition-colors">
                               Reject Order
                             </Button>
                             {(() => {
@@ -468,7 +604,11 @@ export default function PreApprovalPage() {
                                })
                                
                                return (
-                                <Button onClick={() => handleApprove(rawOrder)} disabled={isApproving || !isValid}>
+                                <Button 
+                                  onClick={() => handleApprove(rawOrder)} 
+                                  disabled={isApproving || !isValid}
+                                  className="min-w-[250px] h-11 text-base font-bold shadow-lg shadow-blue-100 transition-all hover:scale-[1.01] active:scale-[0.99]"
+                                >
                                     {isApproving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                     {isApproving ? "Processing..." : "Submit Pre-Approval"}
                                 </Button>

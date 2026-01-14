@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useRouter } from "next/navigation"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
@@ -14,6 +14,7 @@ import { useState, useEffect } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Settings2 } from "lucide-react"
+import { saveWorkflowHistory } from "@/lib/storage-utils"
 
 
 export default function CommitmentReviewPage() {
@@ -230,46 +231,26 @@ export default function CommitmentReviewPage() {
         const historyEntry = {
           orderNo: orderIdentifier,
           customerName: selectedOrder.customerName || "Unknown",
-          stage: "Approval Of Order", // Renamed from Commitment Review
-          status: "Rejected",
+          stage: "Approval Of Order",
+          status: "Rejected" as const,
           processedBy: "Current User",
           timestamp: new Date().toISOString(),
-          date: new Date().toLocaleDateString("en-GB"),
           remarks: "Rejected by User",
           data: {
             orderData: selectedOrder,
             checklistResults: checklistValues,
             rejectedAt: new Date().toISOString(),
           },
-          productCount: selectedOrder.products?.length || 0,
+          orderType: selectedOrder.orderType || "regular"
         }
 
-        const existingHistory = localStorage.getItem("workflowHistory")
-        const history = existingHistory ? JSON.parse(existingHistory) : []
-        history.push(historyEntry)
-        localStorage.setItem("workflowHistory", JSON.stringify(history))
+        saveWorkflowHistory(historyEntry)
 
         toast({
           title: "Order Rejected",
           description: "Order has been rejected and saved to history.",
           variant: "destructive",
         })
-
-         // Update local state immediately
-        setHistory((prev) => [...prev, historyEntry])
-
-        const newPending = pendingOrders.filter(o => (o.doNumber || o.orderNo) !== orderIdentifier)
-        setPendingOrders(newPending)
-        
-        // Update persisted list as well
-        const savedPending = localStorage.getItem("approvalPendingItems")
-        if (savedPending) {
-           const list = JSON.parse(savedPending)
-           const updatedList = list.filter((o: any) => (o.doNumber || o.orderNo) !== orderIdentifier)
-           localStorage.setItem("approvalPendingItems", JSON.stringify(updatedList))
-        }
-
-        setSelectedOrder(null)
 
       } else {
         const finalData = {
@@ -284,24 +265,19 @@ export default function CommitmentReviewPage() {
           status: "Approved",
         }
 
-        const existingHistory = localStorage.getItem("workflowHistory")
-        const currentHistory = existingHistory ? JSON.parse(existingHistory) : []
-        
         const historyEntry = {
           orderNo: orderIdentifier,
           customerName: selectedOrder.customerName || "Unknown",
           stage: "Approval Of Order",
-          status: "Approved",
+          status: "Approved" as const,
           processedBy: "Current User",
           timestamp: new Date().toISOString(),
-          date: new Date().toLocaleDateString("en-GB"),
           remarks: "Verified & Approved",
           data: finalData,
-          productCount: selectedOrder.products?.length || 0,
+          orderType: selectedOrder.orderType || "regular"
         }
 
-        currentHistory.push(historyEntry)
-        localStorage.setItem("workflowHistory", JSON.stringify(currentHistory))
+        saveWorkflowHistory(historyEntry)
         
         // Update local state immediately
         setHistory((prev) => [...prev, historyEntry])
@@ -462,6 +438,12 @@ export default function CommitmentReviewPage() {
                    const ratesLtr = order.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || order.ratePerLtr || "—";
                    const rates15Kg = order.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || order.rateLtr || "—";
 
+                   const CUSTOMER_MAP: Record<string, string> = {
+                     cust1: "Acme Corp",
+                     cust2: "Global Industries",
+                     cust3: "Zenith Supply",
+                   }
+
                    const row = {
                      orderNo: order.doNumber || order.orderNo || "DO-XXX",
                      deliveryPurpose: order.orderPurpose || "—",
@@ -469,7 +451,7 @@ export default function CommitmentReviewPage() {
                      orderType: order.orderType || "—",
                      soNo: order.soNumber || "—",
                      partySoDate: order.soDate || "—",
-                     customerName: order.customerName || "—",
+                     customerName: CUSTOMER_MAP[order.customerName] || order.customerName || "—",
                      // New Date Columns
                      startDate: order.startDate || "—",
                      endDate: order.endDate || "—",
@@ -513,52 +495,90 @@ export default function CommitmentReviewPage() {
                          <DialogTrigger asChild>
                            <Button size="sm" onClick={() => setSelectedOrder(order)}>Verify Order</Button>
                          </DialogTrigger>
-                         <DialogContent className="max-w-xl">
-                           <DialogHeader>
-                             <DialogTitle>Verification Checklist: {selectedOrder?.soNumber || selectedOrder?.doNumber}</DialogTitle>
-                           </DialogHeader>
-                           <div className="grid gap-4 py-4">
-                             {/* <div className="space-y-2 p-3 rounded-lg bg-muted/20">
-                                 <Label className="text-base font-semibold">Source of Material</Label>
-                                 <Select value={sourceOfMaterial} onValueChange={setSourceOfMaterial}>
-                                     <SelectTrigger className="bg-background">
-                                         <SelectValue placeholder="Select Source" />
-                                     </SelectTrigger>
-                                     <SelectContent>
-                                         <SelectItem value="in-stock">In Stock</SelectItem>
-                                         <SelectItem value="production">From Production</SelectItem>
-                                     </SelectContent>
-                                 </Select>
-                             </div> */}
-                             {checkItems.map((item) => (
-                               <div key={item.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/20">
-                                 <Label className="text-base">{item.label}</Label>
-                                 <RadioGroup
-                                   value={checklistValues[item.id]}
-                                   onValueChange={(value) => handleChecklistChange(item.id, value)}
-                                   className="flex gap-4"
-                                 >
-                                   <div className="flex items-center space-x-2">
-                                     <RadioGroupItem value="approve" id={`${item.id}-ok`} />
-                                     <Label htmlFor={`${item.id}-ok`} className="text-green-600 cursor-pointer">
-                                       Approve
-                                     </Label>
-                                   </div>
-                                   <div className="flex items-center space-x-2">
-                                     <RadioGroupItem value="reject" id={`${item.id}-no`} />
-                                     <Label htmlFor={`${item.id}-no`} className="text-red-600 cursor-pointer">
-                                       Reject
-                                     </Label>
-                                   </div>
-                                 </RadioGroup>
-                               </div>
-                             ))}
+                           <DialogContent className="sm:max-w-6xl !max-w-6xl max-h-[95vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                            <DialogHeader className="border-b pb-4">
+                              <DialogTitle className="text-xl font-bold text-slate-900 leading-none">Approval Of Order: {selectedOrder?.soNumber || selectedOrder?.doNumber}</DialogTitle>
+                              <DialogDescription className="text-slate-500 mt-1.5">Verify order details and complete the six-point check for commitment.</DialogDescription>
+                            </DialogHeader>
+
+                            {/* Order Summary Section */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm mt-4">
+                                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-y-6 gap-x-8">
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Party Name</Label>
+                                        <p className="text-sm font-bold text-slate-900 leading-tight">{row.customerName}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Date</Label>
+                                        <p className="text-sm font-medium text-slate-700">{row.partySoDate}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Type</Label>
+                                        <p className="text-sm font-medium text-slate-700">{row.orderType}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Delivery Date</Label>
+                                        <p className="text-sm font-medium text-slate-700">{row.deliveryDate}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">WhatsApp No.</Label>
+                                        <p className="text-sm font-medium text-green-600 font-mono">{row.whatsapp || "—"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Broker Name</Label>
+                                        <p className="text-sm font-medium text-slate-700">{row.brokerName || "Direct"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Customer Type</Label>
+                                        <p className="text-sm font-medium text-slate-700 capitalize">{row.customerType}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Transport Type</Label>
+                                        <p className="text-sm font-medium text-slate-700 capitalize">{row.transportType}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Payment Terms</Label>
+                                        <p className="text-sm font-medium text-slate-700">{row.paymentTerms}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="py-6 space-y-4">
+                              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 px-1 uppercase tracking-tight">
+                                <div className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                                Six-Point Verification
+                              </h3>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {checkItems.map((item) => (
+                                  <div key={item.id} className="flex items-center justify-between p-4 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-slate-200 transition-colors">
+                                    <Label className="text-sm font-semibold text-slate-700">{item.label}</Label>
+                                    <RadioGroup
+                                      value={checklistValues[item.id]}
+                                      onValueChange={(value) => handleChecklistChange(item.id, value)}
+                                      className="flex gap-6"
+                                    >
+                                      <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="approve" id={`${item.id}-ok`} className="text-green-600" />
+                                        <Label htmlFor={`${item.id}-ok`} className="text-sm font-medium text-green-600 cursor-pointer">
+                                          Approve
+                                        </Label>
+                                      </div>
+                                      <div className="flex items-center space-x-2">
+                                        <RadioGroupItem value="reject" id={`${item.id}-no`} className="text-red-600" />
+                                        <Label htmlFor={`${item.id}-no`} className="text-sm font-medium text-red-600 cursor-pointer">
+                                          Reject
+                                        </Label>
+                                      </div>
+                                    </RadioGroup>
+                                  </div>
+                                ))}
+                              </div>
                            </div>
-                           <DialogFooter>
+                           <DialogFooter className="border-t pt-4 sm:justify-center">
                              <Button
                                onClick={handleConfirmCommitment}
                                disabled={isConfirming}
-                               className="w-full"
+                               className="min-w-[300px] px-8 h-11 text-base font-bold shadow-lg shadow-blue-100 transition-all hover:scale-[1.01] active:scale-[0.99]"
                                variant={Object.values(checklistValues).includes("reject") ? "destructive" : "default"}
                              >
                                {isConfirming

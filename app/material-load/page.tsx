@@ -15,6 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
@@ -41,7 +42,11 @@ export default function MaterialLoadPage() {
     tareWeight: "",
     netWeight: "",
     totalWeight: "",
-    differentWeight: "",
+    grossWeightPacking: "",
+    netWeightPacking: "",
+    otherItemWeight: "",
+    dharamkataWeight: "",
+    differanceWeight: "",
     transporterName: "",
     reason: "",
     truckNo: "",
@@ -68,16 +73,29 @@ export default function MaterialLoadPage() {
     }
   }, [])
 
+
+
   useEffect(() => {
-    const gross = parseFloat(loadData.grossWeight) || 0
-    const tare = parseFloat(loadData.tareWeight) || 0
-    const net = gross - tare
+    const netPacking = parseFloat(loadData.netWeightPacking) || 0
+    const otherPacking = parseFloat(loadData.otherItemWeight) || 0
+    const grossPacking = netPacking + otherPacking
     
     setLoadData(prev => ({
       ...prev,
-      netWeight: net > 0 ? net.toFixed(2) : ""
+      grossWeightPacking: (loadData.netWeightPacking || loadData.otherItemWeight) ? grossPacking.toFixed(2) : ""
     }))
-  }, [loadData.grossWeight, loadData.tareWeight])
+  }, [loadData.netWeightPacking, loadData.otherItemWeight])
+
+  useEffect(() => {
+    const dharamWeight = parseFloat(loadData.dharamkataWeight) || 0
+    const grossPacking = parseFloat(loadData.grossWeightPacking) || 0
+    const diff = dharamWeight - grossPacking
+    
+    setLoadData(prev => ({
+      ...prev,
+      differanceWeight: (loadData.dharamkataWeight || loadData.grossWeightPacking) ? diff.toFixed(2) : ""
+    }))
+  }, [loadData.dharamkataWeight, loadData.grossWeightPacking])
 
   const handleSubmit = async (order: any) => {
     setIsProcessing(true)
@@ -245,7 +263,7 @@ export default function MaterialLoadPage() {
                      customerType: order.customerType || "—",
                      orderType: order.orderType || "—",
                      soNo: order.soNumber || "—",
-                     partySoDate: order.soDate || "—",
+                     partySoDate: order.soDate || order.partySoDate || "—",
                      customerName: order.customerName || "—",
                      itemConfirm: order.itemConfirm || "—",
                      productName: prodNames,
@@ -279,159 +297,274 @@ export default function MaterialLoadPage() {
                      <TableCell>
                        <Dialog>
                          <DialogTrigger asChild>
-                           <Button size="sm">Load Material</Button>
+                           <Button 
+                             size="sm"
+                             onClick={() => {
+                               setLoadData(prev => ({
+                                 ...prev,
+                                 actualQty: order.dispatchData?.qtyToDispatch || order.orderQty || ""
+                               }))
+                             }}
+                           >
+                             Load Material
+                           </Button>
                          </DialogTrigger>
-                         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-                           <DialogHeader>
-                             <DialogTitle>Material Load: {order.orderNo}</DialogTitle>
-                           </DialogHeader>
-                           <div className="space-y-4 py-4">
-                             <div className="grid grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                 <Label>Actual QTY</Label>
-                                 <Input
-                                   type="number"
-                                   value={loadData.actualQty}
-                                   onChange={(e) => setLoadData({ ...loadData, actualQty: e.target.value })}
-                                   placeholder="Enter actual qty"
-                                 />
-                               </div>
-                               <div className="space-y-2">
-                                 <Label>Weightment Slip Copy</Label>
-                                 <Input type="file" />
-                               </div>
-                             </div>
-                             
-                             <div className="grid grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                 <Label>RST No</Label>
-                                 <Input
-                                   value={loadData.rstNo}
-                                   onChange={(e) => setLoadData({ ...loadData, rstNo: e.target.value })}
-                                   placeholder="Enter RST no"
-                                 />
-                               </div>
-                               <div className="space-y-2">
-                                 <Label>Truck No.</Label>
-                                 <Input
-                                   value={loadData.truckNo}
-                                   onChange={(e) => setLoadData({ ...loadData, truckNo: e.target.value })}
-                                   placeholder="Enter truck no"
-                                 />
-                               </div>
-                             </div>
+                         <DialogContent className="sm:max-w-6xl !max-w-6xl max-h-[95vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                            <DialogHeader>
+                              <DialogTitle className="text-xl font-bold text-slate-900 leading-none">Material Load: {order.orderNo}</DialogTitle>
+                              <DialogDescription className="text-slate-500 mt-1.5">Enter actual weights and verification details for dispatch.</DialogDescription>
+                            </DialogHeader>
 
-                             <div className="grid grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                 <Label>Gross Weight</Label>
-                                 <Input
-                                   type="number"
-                                   value={loadData.grossWeight}
-                                   onChange={(e) => setLoadData({ ...loadData, grossWeight: e.target.value })}
-                                   placeholder="Enter gross weight"
-                                 />
-                               </div>
-                               <div className="space-y-2">
-                                 <Label>Tare Weight</Label>
-                                 <Input
-                                   type="number"
-                                   value={loadData.tareWeight}
-                                   onChange={(e) => setLoadData({ ...loadData, tareWeight: e.target.value })}
-                                   placeholder="Enter tare weight"
-                                 />
-                               </div>
-                             </div>
-
-                             <div className="grid grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                 <Label>Net Weight</Label>
-                                 <Input 
-                                   value={loadData.netWeight} 
-                                   onChange={(e) => setLoadData({ ...loadData, netWeight: e.target.value })}
-                                   placeholder="Net weight"
-                                 />
-                               </div>
-                               <div className="space-y-2">
-                                 <Label>Total Weight</Label>
-                                 <Input
-                                   type="number"
-                                   value={loadData.totalWeight}
-                                   onChange={(e) => setLoadData({ ...loadData, totalWeight: e.target.value })}
-                                   placeholder="Enter total weight"
-                                 />
-                               </div>
-                             </div>
-
-                             <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                 <Label>Different Weight</Label>
-                                 <Input
-                                   type="number"
-                                   value={loadData.differentWeight}
-                                   onChange={(e) => setLoadData({ ...loadData, differentWeight: e.target.value })}
-                                   placeholder="Enter difference"
-                                   className={parseFloat(loadData.differentWeight) > 20 ? "text-red-600 font-bold border-red-300 focus-visible:ring-red-300" : ""}
-                                 />
-                                 {parseFloat(loadData.differentWeight) > 20 && (
-                                   <p className="text-xs text-red-600">Difference exceeds 20kg limit</p>
-                                 )}
-                               </div>
-                               <div className="space-y-2">
-                                 <Label>Transporter Name</Label>
-                                 <Input
-                                   value={loadData.transporterName}
-                                   onChange={(e) => setLoadData({ ...loadData, transporterName: e.target.value })}
-                                   placeholder="Enter transporter name"
-                                 />
-                               </div>
-                             </div>
-
-                             <div className="grid grid-cols-2 gap-4">
-                               <div className="space-y-2">
-                                 <Label>Reason of Difference in Weight</Label>
-                                 <Input
-                                   value={loadData.reason}
-                                   onChange={(e) => setLoadData({ ...loadData, reason: e.target.value })}
-                                   placeholder="Enter reason"
-                                 />
-                               </div>
-                               <div className="space-y-2">
-                                 <Label>Vehicle No. Plate Image</Label>
-                                 <Input type="file" />
-                               </div>
-                             </div>
-                           </div>
-                           <DialogFooter>
-                             <Button onClick={() => handleSubmit(order)} disabled={isProcessing}>
-                               {isProcessing ? "Processing..." : "Submit & Continue"}
-                             </Button>
-                           </DialogFooter>
-                         </DialogContent>
-                       </Dialog>
-                     </TableCell>
-                     {ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
-                       <TableCell key={col.id} className="whitespace-nowrap text-center">
-                         {col.id === "status" ? (
-                            <div className="flex justify-center">
-                               <Badge className="bg-indigo-100 text-indigo-700">Ready to Load</Badge>
+                            {/* Order Summary Section */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm mt-4">
+                                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-y-6 gap-x-8">
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Party Name</Label>
+                                        <p className="text-sm font-bold text-slate-900 leading-tight">{order.customerName}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Date</Label>
+                                        <p className="text-sm font-medium text-slate-700">{order.soDate || "—"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Type</Label>
+                                        <p className="text-sm font-medium text-slate-700">{order.orderType}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Delivery Date</Label>
+                                        <p className="text-sm font-medium text-slate-700">{order.deliveryDate}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">WhatsApp No.</Label>
+                                        <p className="text-sm font-medium text-green-600 font-mono">{order.whatsappNo || "—"}</p>
+                                    </div>
+                                    
+                                    {/* New Fetched Details */}
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Actual Qty</Label>
+                                        <p className="text-sm font-medium text-slate-700">{order.dispatchData?.qtyToDispatch || order.qtyToDispatch || "—"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Transport Type</Label>
+                                        <p className="text-sm font-medium text-slate-700 capitalize">{order.dispatchData?.transportType || order.transportType || "—"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Delivery From</Label>
+                                        <p className="text-sm font-medium text-slate-700">{order.dispatchData?.deliveryFrom || order.deliveryData?.deliveryFrom || "—"}</p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Dispatch Date</Label>
+                                        <p className="text-sm font-medium text-slate-700">
+                                            {order.actualDispatchData?.confirmedAt 
+                                                ? new Date(order.actualDispatchData.confirmedAt).toLocaleDateString("en-GB") 
+                                                : "—"}
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
-                         ) : row[col.id as keyof typeof row]}
-                       </TableCell>
-                     ))}
-                   </TableRow>
-                   )
-                })
-              ) : (
-                <TableRow>
-                  <TableCell colSpan={visibleColumns.length + 1} className="text-center py-8 text-muted-foreground">
-                    No orders pending for material loading
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </Card>
-      </div>
-    </WorkflowStageShell>
-  )
-}
+                            <div className="py-6 space-y-8">
+                              {/* Primary Logistics Section */}
+                              <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-4 shadow-sm">
+                                <h3 className="text-sm font-bold text-slate-800 px-1 flex items-center gap-2 uppercase tracking-tight">
+                                  <div className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                                  General Details
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Actual Qty</Label>
+                                    <Input
+                                      type="number"
+                                      value={loadData.actualQty || ""}
+                                      onChange={(e) => setLoadData(prev => ({ ...prev, actualQty: e.target.value }))}
+                                      placeholder="Qty"
+                                      className="bg-white border-slate-200 h-10"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">RST No</Label>
+                                    <Input
+                                      value={loadData.rstNo || ""}
+                                      onChange={(e) => setLoadData(prev => ({ ...prev, rstNo: e.target.value }))}
+                                      placeholder="RST No"
+                                      className="bg-white border-slate-200 h-10"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Truck No.</Label>
+                                    <Input
+                                      value={loadData.truckNo || ""}
+                                      onChange={(e) => setLoadData(prev => ({ ...prev, truckNo: e.target.value }))}
+                                      placeholder="Truck No"
+                                      className="bg-white border-slate-200 uppercase font-mono h-10"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Transporter Name</Label>
+                                    <Input
+                                      value={loadData.transporterName || ""}
+                                      onChange={(e) => setLoadData(prev => ({ ...prev, transporterName: e.target.value }))}
+                                      placeholder="Transporter"
+                                      className="bg-white border-slate-200 h-10"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Tare Weight</Label>
+                                    <Input
+                                      type="number"
+                                      value={loadData.tareWeight || ""}
+                                      onChange={(e) => setLoadData(prev => ({ ...prev, tareWeight: e.target.value }))}
+                                      placeholder="Tare"
+                                      className="bg-white border-slate-200 h-10 focus-visible:ring-blue-300"
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Total Weight</Label>
+                                    <Input
+                                      type="number"
+                                      value={loadData.totalWeight || ""}
+                                      onChange={(e) => setLoadData(prev => ({ ...prev, totalWeight: e.target.value }))}
+                                      placeholder="Total"
+                                      className="bg-white border-slate-200 h-10 focus-visible:ring-blue-300"
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Packing Weight Details */}
+                                <div className="bg-indigo-50/30 p-4 rounded-lg border border-indigo-100 shadow-sm">
+                                  <h3 className="text-sm font-bold text-indigo-800 mb-4 px-1 flex items-center gap-2">
+                                    <div className="w-1 h-4 bg-indigo-500 rounded-full" />
+                                    Packing As Per Weights
+                                  </h3>
+                                  <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Net Weight As Per Packing</Label>
+                                        <Input
+                                          type="number"
+                                          value={loadData.netWeightPacking || ""}
+                                          onChange={(e) => setLoadData(prev => ({ ...prev, netWeightPacking: e.target.value }))}
+                                          placeholder="Net"
+                                          className="bg-white border-indigo-200"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Other Items As Per Packing</Label>
+                                        <Input
+                                          type="number"
+                                          value={loadData.otherItemWeight || ""}
+                                          onChange={(e) => setLoadData(prev => ({ ...prev, otherItemWeight: e.target.value }))}
+                                          placeholder="Other"
+                                          className="bg-white border-indigo-200"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-[10px] uppercase font-bold text-indigo-600 tracking-wider">Gross Weight As Per Packing</Label>
+                                      <Input
+                                        type="number"
+                                        value={loadData.grossWeightPacking || ""}
+                                        readOnly
+                                        className="bg-indigo-100 border-indigo-200 font-bold text-indigo-700 pointer-events-none"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Dharamkata Verification */}
+                                <div className="bg-amber-50/30 p-4 rounded-lg border border-amber-100 shadow-sm">
+                                  <h3 className="text-sm font-bold text-amber-800 mb-4 px-1 flex items-center gap-2">
+                                    <div className="w-1 h-4 bg-amber-500 rounded-full" />
+                                    Dharamkata Verification
+                                  </h3>
+                                  <div className="space-y-4">
+                                    <div className="grid grid-cols-2 gap-4">
+                                      <div className="space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-amber-600 tracking-wider">Dharamkata Weight</Label>
+                                        <Input
+                                          type="number"
+                                          value={loadData.dharamkataWeight || ""}
+                                          onChange={(e) => setLoadData(prev => ({ ...prev, dharamkataWeight: e.target.value }))}
+                                          placeholder="Weight"
+                                          className="bg-white border-amber-200 focus-visible:ring-amber-500"
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <Label className="text-[10px] uppercase font-bold text-amber-600 tracking-wider">Difference</Label>
+                                        <Input
+                                          type="number"
+                                          value={loadData.differanceWeight || ""}
+                                          readOnly
+                                          className="bg-amber-100 border-amber-200 font-bold text-amber-700 pointer-events-none"
+                                        />
+                                      </div>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label className="text-[10px] uppercase font-bold text-amber-600 tracking-wider">Reason of Difference</Label>
+                                      <Input
+                                        value={loadData.reason || ""}
+                                        onChange={(e) => setLoadData(prev => ({ ...prev, reason: e.target.value }))}
+                                        placeholder="Reason if any"
+                                        className="bg-white border-amber-200 focus-visible:ring-amber-500"
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Uploads */}
+                              <div className="bg-slate-50 p-4 rounded-lg border border-slate-100 shadow-sm">
+                                <h3 className="text-sm font-bold text-slate-800 mb-4 px-1 flex items-center gap-2">
+                                  <div className="w-1 h-4 bg-slate-600 rounded-full" />
+                                  Verification Artifacts
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Weightment Slip Copy</Label>
+                                    <Input type="file" className="bg-white cursor-pointer" />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label className="text-[10px] uppercase font-bold text-slate-500 tracking-wider">Vehicle No. Plate Image</Label>
+                                    <Input type="file" className="bg-white cursor-pointer" />
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <DialogFooter className="border-t pt-4">
+                              <Button variant="outline" className="mr-auto" onClick={() => (document.querySelector('[data-state="open"] button[aria-label="Close"]') as HTMLElement)?.click()}>
+                                Cancel
+                              </Button>
+                              <Button onClick={() => handleSubmit(order)} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700 min-w-[150px]">
+                                {isProcessing ? "Processing..." : "Submit & Continue"}
+                              </Button>
+                            </DialogFooter>
+                          </DialogContent>
+                        </Dialog>
+                      </TableCell>
+                      {ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
+                        <TableCell key={col.id} className="whitespace-nowrap text-center">
+                          {col.id === "status" ? (
+                             <div className="flex justify-center">
+                                <Badge className="bg-indigo-100 text-indigo-700">Ready to Load</Badge>
+                             </div>
+                          ) : row[col.id as keyof typeof row]}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                    )
+                 })
+               ) : (
+                 <TableRow>
+                   <TableCell colSpan={visibleColumns.length + 1} className="text-center py-8 text-muted-foreground">
+                     No orders pending for material loading
+                   </TableCell>
+                 </TableRow>
+               )}
+             </TableBody>
+           </Table>
+         </Card>
+       </div>
+     </WorkflowStageShell>
+   )
+ }

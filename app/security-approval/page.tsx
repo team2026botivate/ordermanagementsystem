@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/hooks/use-toast"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Dialog,
   DialogContent,
@@ -36,6 +37,13 @@ export default function SecurityApprovalPage() {
   const [uploadData, setUploadData] = useState({
     biltyImage: null as File | null,
     vehicleImages: [] as File[],
+    checklist: {
+      mallLoad: false,
+      qtyMatch: false,
+      gaadiCovered: false,
+      image: false,
+      driverCond: false,
+    }
   })
 
   useEffect(() => {
@@ -71,6 +79,7 @@ export default function SecurityApprovalPage() {
         securityData: {
           biltyUploaded: !!uploadData.biltyImage,
           vehicleImagesCount: uploadData.vehicleImages.length,
+          checklist: uploadData.checklist,
           approvedAt: new Date().toISOString(),
         },
       }
@@ -212,25 +221,37 @@ export default function SecurityApprovalPage() {
             <TableBody>
               {filteredPendingOrders.length > 0 ? (
                 filteredPendingOrders.map((order, index) => {
-                   const prodNames = order.products?.map((p: any) => p.productName).join(", ") || "";
-                   const uoms = order.products?.map((p: any) => p.uom).join(", ") || "";
-                   const qtys = order.products?.map((p: any) => p.orderQty).join(", ") || "";
-                   const altUoms = order.products?.map((p: any) => p.altUom).join(", ") || "";
-                   const altQtys = order.products?.map((p: any) => p.altQty).join(", ") || "";
+                   // Robust data fetching for Stage 8 which receives data from Stage 7 (Material Load)
+                   // and possibly Stage 6 / 5 / 4 / 3 history entries.
+                   const internalOrder = order.data?.orderData || order;
                    
-                   const ratesLtr = order.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || order.ratePerLtr || "—";
-                   const rates15Kg = order.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || order.rateLtr || "—";
-                   const oilTypes = order.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || order.oilType || "—";
+                   const prodNames = internalOrder.products?.map((p: any) => p.productName).join(", ") || 
+                                     internalOrder.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || 
+                                     "—";
+                   const uoms = internalOrder.products?.map((p: any) => p.uom).join(", ") || "—";
+                   const qtys = internalOrder.products?.map((p: any) => p.orderQty).join(", ") || "—";
+                   const altUoms = internalOrder.products?.map((p: any) => p.altUom).join(", ") || "—";
+                   const altQtys = internalOrder.products?.map((p: any) => p.altQty).join(", ") || "—";
+                   
+                   const ratesLtr = internalOrder.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || internalOrder.ratePerLtr || "—";
+                   const rates15Kg = internalOrder.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || internalOrder.rateLtr || "—";
+                   const oilTypes = internalOrder.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || internalOrder.oilType || "—";
+
+                   const CUSTOMER_MAP: Record<string, string> = {
+                     cust1: "Acme Corp",
+                     cust2: "Global Industries",
+                     cust3: "Zenith Supply",
+                   }
 
                    const row = {
-                     orderNo: order.doNumber || order.orderNo || "DO-XXX",
-                     deliveryPurpose: order.orderPurpose || "—",
-                     customerType: order.customerType || "—",
-                     orderType: order.orderType || "—",
-                     soNo: order.soNumber || "—",
-                     partySoDate: order.soDate || "—",
-                     customerName: order.customerName || "—",
-                     itemConfirm: order.itemConfirm || "—",
+                     orderNo: internalOrder.doNumber || internalOrder.orderNo || "DO-XXX",
+                     deliveryPurpose: internalOrder.orderPurpose || internalOrder.deliveryPurpose || "—",
+                     customerType: internalOrder.customerType || "—",
+                     orderType: internalOrder.orderType || "—",
+                     soNo: internalOrder.soNumber || "—",
+                     partySoDate: internalOrder.soDate || internalOrder.partySoDate || order.data?.orderData?.soDate || order.partySoDate || "—",
+                     customerName: CUSTOMER_MAP[internalOrder.customerName] || internalOrder.customerName || "—",
+                     itemConfirm: internalOrder.itemConfirm || "—",
                      productName: prodNames,
                      uom: uoms,
                      orderQty: qtys,
@@ -239,21 +260,20 @@ export default function SecurityApprovalPage() {
                      oilType: oilTypes,
                      ratePerLtr: ratesLtr,
                      ratePer15Kg: rates15Kg,
-                     rateOfMaterial: order.rateMaterial || "—",
-                     totalWithGst: order.totalWithGst || "—",
-                     transportType: order.dispatchData?.transportType || "—",
+                     rateOfMaterial: internalOrder.rateMaterial || "—",
+                     totalWithGst: internalOrder.totalWithGst || "—",
+                     transportType: internalOrder.dispatchData?.transportType || internalOrder.transportType || "—",
                      uploadSo: "so_document.pdf",
-                     contactPerson: order.customerPerson || "—",
-                     whatsapp: order.whatsappNo || "—",
-                     address: order.customerAddress || "—",
-                     paymentTerms: order.paymentTerms || "—",
-                     advanceTaken: order.advancePaymentTaken || "—",
-                     advanceAmount: order.advanceAmount || "—",
-                     isBroker: order.isBrokerOrder || "—",
-                     brokerName: order.brokerName || "—",
-                     deliveryDate: order.deliveryDate || "—",
-                     qtyToDispatch: order.dispatchData?.qtyToDispatch || "—",
-                     deliveryFrom: order.deliveryData?.deliveryFrom || "—",
+                     contactPerson: internalOrder.customerPerson || internalOrder.contactPerson || "—",
+                     whatsapp: internalOrder.whatsappNo || "—",
+                     address: internalOrder.customerAddress || "—",
+                     paymentTerms: internalOrder.paymentTerms || "—",
+                     advanceTaken: internalOrder.advancePaymentTaken || "—",
+                     advanceAmount: internalOrder.advanceAmount || "—",
+                     isBroker: internalOrder.isBrokerOrder || internalOrder.isBroker || "—",
+                     brokerName: internalOrder.brokerName || "—",
+                     actualQty: order.loadData?.actualQty || internalOrder.loadData?.actualQty || internalOrder.dispatchData?.qtyToDispatch || "—",
+                     deliveryFrom: internalOrder.deliveryData?.deliveryFrom || internalOrder.dispatchData?.deliveryFrom || internalOrder.deliveryFrom || "—",
                      status: "Pending Security", // Special handling for badge
                    }
 
@@ -264,11 +284,85 @@ export default function SecurityApprovalPage() {
                          <DialogTrigger asChild>
                            <Button size="sm">Approve</Button>
                          </DialogTrigger>
-                         <DialogContent className="max-w-lg">
-                           <DialogHeader>
-                             <DialogTitle>Security Approval: {order.orderNo}</DialogTitle>
-                           </DialogHeader>
-                             <div className="space-y-4">
+                          <DialogContent className="sm:max-w-6xl !max-w-6xl max-h-[95vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                            <DialogHeader>
+                              <DialogTitle>Security Approval: {row.orderNo}</DialogTitle>
+                            </DialogHeader>
+                            
+                            {/* Order Summary Section */}
+                            <div className="bg-blue-50/40 border border-blue-100/50 rounded-xl p-4 grid grid-cols-1 md:grid-cols-3 gap-y-6 gap-x-8">
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Party Name</Label>
+                                    <p className="text-sm font-bold text-slate-900 leading-tight">{row.customerName}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Order / DO Date</Label>
+                                    <p className="text-sm font-semibold text-slate-900">{row.partySoDate}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Order Type</Label>
+                                    <p className="text-sm font-semibold text-slate-900">{row.orderType} ({row.deliveryPurpose})</p>
+                                </div>
+
+                                <div className="col-span-1 md:col-span-2 space-y-1">
+                                    <div className="max-h-[140px] overflow-y-auto relative">
+                                        <div className="grid grid-cols-2 gap-4 sticky top-0 z-10 bg-[#f4f9ff] pb-2 pt-1">
+                                            <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Products</Label>
+                                            <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Order Qty</Label>
+                                        </div>
+                                        {(() => {
+                                            const isPreApproval = internalOrder.orderType?.toString().toLowerCase().includes("pre-approval");
+                                            const displayProducts = (isPreApproval && (internalOrder.preApprovalProducts?.length || 0) > 0)
+                                                ? internalOrder.preApprovalProducts
+                                                : ((internalOrder.products?.length > 0) ? internalOrder.products : (internalOrder.preApprovalProducts || []));
+
+                                            if (!displayProducts || displayProducts.length === 0) {
+                                                return (
+                                                    <div className="grid grid-cols-2 gap-4 text-sm font-semibold text-slate-900">
+                                                        <div>—</div>
+                                                        <div>—</div>
+                                                    </div>
+                                                );
+                                            }
+
+                                            return displayProducts.map((p: any, idx: number) => {
+                                                const prodName = isPreApproval ? (p.oilType || p.productName) : (p.productName || p.oilType);
+                                                const qty = isPreApproval 
+                                                    ? (p.ratePerLtr || p.rate || "—") 
+                                                    : (p.orderQty !== undefined ? p.orderQty : "—");
+                                                
+                                                if (!prodName) return null;
+                                                
+                                                return (
+                                                    <div key={idx} className="grid grid-cols-2 gap-4 text-sm font-semibold text-slate-900 mb-1 leading-tight">
+                                                        <div>{prodName}</div>
+                                                        <div>{qty}</div>
+                                                    </div>
+                                                );
+                                            });
+                                        })()}
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Payment Terms</Label>
+                                    <p className="text-sm font-semibold text-slate-900">{row.paymentTerms}</p>
+                                </div>
+
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Broker Name</Label>
+                                    <p className="text-sm font-semibold text-slate-900">{row.isBroker === "Yes" || row.isBroker === true ? row.brokerName : "Direct"}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Transport Type</Label>
+                                    <p className="text-sm font-semibold text-slate-900 whitespace-nowrap">{row.transportType}</p>
+                                </div>
+                                <div className="space-y-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70">Customer Type</Label>
+                                    <p className="text-sm font-semibold text-slate-900">{row.customerType}</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4 py-4">
                                <div className="space-y-2">
                                  <Label>Bilty Image</Label>
                                  <Input
@@ -281,52 +375,104 @@ export default function SecurityApprovalPage() {
                                    }}
                                  />
                                </div>
-                               <div className="space-y-2">
-                                 <Label>Vehicle Images</Label>
-                                 <div className="flex flex-wrap gap-4">
-                                   {uploadData.vehicleImages.map((file, index) => (
-                                     <div key={index} className="relative w-24 h-24 border rounded overflow-hidden group">
-                                       <img
-                                         src={URL.createObjectURL(file)}
-                                         alt={`Vehicle ${index + 1}`}
-                                         className="w-full h-full object-cover"
-                                       />
-                                       <button
-                                         onClick={() => {
-                                           const newImages = [...uploadData.vehicleImages]
-                                           newImages.splice(index, 1)
-                                           setUploadData({ ...uploadData, vehicleImages: newImages })
-                                         }}
-                                         className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                                       >
-                                         <X className="h-3 w-3" />
-                                       </button>
-                                     </div>
-                                   ))}
-                                   <label className="w-24 h-24 border-2 border-dashed rounded flex flex-col items-center justify-center cursor-pointer hover:bg-muted/50 transition-colors">
-                                     <Plus className="h-6 w-6 text-muted-foreground" />
-                                     <span className="text-xs text-muted-foreground mt-1">Add Image</span>
-                                     <input
-                                       type="file"
-                                       accept="image/*"
-                                       multiple
-                                       className="hidden"
-                                       onChange={(e) => {
-                                         if (e.target.files) {
-                                           const newFiles = Array.from(e.target.files)
-                                           setUploadData({
-                                             ...uploadData,
-                                             vehicleImages: [...uploadData.vehicleImages, ...newFiles],
-                                           })
-                                         }
-                                       }}
+
+                               {/* Checklist Section */}
+                               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 space-y-4">
+                                 <Label className="text-sm font-bold text-slate-700">Security Checkpoints</Label>
+                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                   <div className="flex items-center space-x-2">
+                                     <Checkbox 
+                                       id="mallLoad" 
+                                       checked={uploadData.checklist.mallLoad}
+                                       onCheckedChange={(checked) => setUploadData(prev => ({ ...prev, checklist: { ...prev.checklist, mallLoad: !!checked } }))}
                                      />
-                                   </label>
+                                     <Label htmlFor="mallLoad" className="text-sm font-medium cursor-pointer">Mall Load Properly</Label>
+                                   </div>
+                                   <div className="flex items-center space-x-2">
+                                     <Checkbox 
+                                       id="qtyMatch" 
+                                       checked={uploadData.checklist.qtyMatch}
+                                       onCheckedChange={(checked) => setUploadData(prev => ({ ...prev, checklist: { ...prev.checklist, qtyMatch: !!checked } }))}
+                                     />
+                                     <Label htmlFor="qtyMatch" className="text-sm font-medium cursor-pointer">Qty Matching</Label>
+                                   </div>
+                                   <div className="flex items-center space-x-2">
+                                     <Checkbox 
+                                       id="gaadiCovered" 
+                                       checked={uploadData.checklist.gaadiCovered}
+                                       onCheckedChange={(checked) => setUploadData(prev => ({ ...prev, checklist: { ...prev.checklist, gaadiCovered: !!checked } }))}
+                                     />
+                                     <Label htmlFor="gaadiCovered" className="text-sm font-medium cursor-pointer">Gaadi Proper Dhaka hua hai</Label>
+                                   </div>
+                                   <div className="flex items-center space-x-2">
+                                     <Checkbox 
+                                       id="driverCond" 
+                                       checked={uploadData.checklist.driverCond}
+                                       onCheckedChange={(checked) => setUploadData(prev => ({ ...prev, checklist: { ...prev.checklist, driverCond: !!checked } }))}
+                                     />
+                                     <Label htmlFor="driverCond" className="text-sm font-medium cursor-pointer">Driver Condition Good</Label>
+                                   </div>
+                                   <div className="flex items-center space-x-2">
+                                     <Checkbox 
+                                       id="imageCheck" 
+                                       checked={uploadData.checklist.image}
+                                       onCheckedChange={(checked) => setUploadData(prev => ({ ...prev, checklist: { ...prev.checklist, image: !!checked } }))}
+                                     />
+                                     <Label htmlFor="imageCheck" className="text-sm font-medium cursor-pointer">Image (Upload Vehicle Photos)</Label>
+                                   </div>
                                  </div>
-                                 <p className="text-xs text-muted-foreground">
-                                   Upload multiple vehicle images (front, back, side)
-                                 </p>
                                </div>
+                               
+                               {uploadData.checklist.image && (
+                                <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                                 <div className="space-y-2">
+                                   <Label>Vehicle Images</Label>
+                                   <div className="flex flex-wrap gap-4">
+                                     {uploadData.vehicleImages.map((file, index) => (
+                                       <div key={index} className="relative w-24 h-24 border rounded overflow-hidden group">
+                                         <img
+                                           src={URL.createObjectURL(file)}
+                                           alt={`Vehicle ${index + 1}`}
+                                           className="w-full h-full object-cover"
+                                         />
+                                         <button
+                                           onClick={() => {
+                                             const newImages = [...uploadData.vehicleImages]
+                                             newImages.splice(index, 1)
+                                             setUploadData({ ...uploadData, vehicleImages: newImages })
+                                           }}
+                                           className="absolute top-1 right-1 bg-red-500 text-white p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                         >
+                                           <X className="h-3 w-3" />
+                                         </button>
+                                       </div>
+                                     ))}
+                                     <label className="w-24 h-24 border-2 border-dashed rounded flex flex-col items-center justify-center cursor-pointer hover:bg-muted/50 transition-colors">
+                                       <Plus className="h-6 w-6 text-muted-foreground" />
+                                       <span className="text-xs text-muted-foreground mt-1">Add Image</span>
+                                       <input
+                                         type="file"
+                                         accept="image/*"
+                                         multiple
+                                         className="hidden"
+                                         onChange={(e) => {
+                                           if (e.target.files) {
+                                             const newFiles = Array.from(e.target.files)
+                                             setUploadData({
+                                               ...uploadData,
+                                               vehicleImages: [...uploadData.vehicleImages, ...newFiles],
+                                             })
+                                           }
+                                         }}
+                                       />
+                                     </label>
+                                   </div>
+                                   <p className="text-xs text-muted-foreground">
+                                     Upload multiple vehicle images (front, back, side)
+                                   </p>
+                                 </div>
+                                </div>
+                               )}
                              </div>
                            <DialogFooter>
                              <Button onClick={() => handleSubmit(order)} disabled={isProcessing}>

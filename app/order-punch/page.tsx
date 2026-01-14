@@ -12,6 +12,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Save, FileUp, Plus, Trash2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { saveWorkflowHistory } from "@/lib/storage-utils"
 
 type ProductItem = {
   id: string
@@ -58,18 +59,21 @@ type OrderData = {
 }
 
 // Mock customer data for auto-fill
-const MOCK_CUSTOMERS: Record<string, { contactPerson: string; whatsappNo: string; address: string }> = {
+const MOCK_CUSTOMERS: Record<string, { name: string; contactPerson: string; whatsappNo: string; address: string }> = {
   cust1: {
+    name: "Acme Corp",
     contactPerson: "Jane Doe",
     whatsappNo: "+91 9876543210",
     address: "123 Industrial Area, Sector 5, Mumbai",
   },
   cust2: {
+    name: "Global Industries",
     contactPerson: "John Smith",
     whatsappNo: "+91 9876543211",
     address: "456 Tech Park, Phase 2, Pune",
   },
   cust3: {
+    name: "Zenith Supply",
     contactPerson: "Alice Johnson",
     whatsappNo: "+91 9876543212",
     address: "789 Commerce Zone, Hyderabad",
@@ -268,7 +272,7 @@ export default function OrderPunchPage() {
           advancePaymentTaken,
           soNumber,
           soDate,
-          customerName,
+          customerName: customerType === "existing" ? (MOCK_CUSTOMERS[customerName]?.name || customerName) : customerName,
           contactPerson,
           whatsappNo,
           customerAddress,
@@ -298,62 +302,32 @@ export default function OrderPunchPage() {
       }
 
       // Save logic based on type
-      if (orderType === "regular") {
-        const orderData = {
-           ...commonOrderData,
-           stage: "Approval Of Order",
-           status: "Pending",
-        }
-
-        // Save History
-        const savedHistory = localStorage.getItem("workflowHistory")
-        const history = savedHistory ? JSON.parse(savedHistory) : []
-        history.push({
-           ...orderData,
-           timestamp: new Date().toISOString()
-        })
-        localStorage.setItem("workflowHistory", JSON.stringify(history))
-        
-        // Save current data and setup for Approval Page (Commitment/Approval)
-        localStorage.setItem("orderData", JSON.stringify(orderData))
-        
-        // Legacy support if Approval Page uses commitmentReviewData
-        localStorage.setItem("commitmentReviewData", JSON.stringify({ orderData }))
-
-        toast({
-          title: "Order Saved Successfully",
-          description: "Order has been created and moved to Approval Of Order stage.",
-        })
-        resetForm()
-        setTimeout(() => {
-          router.push("/approval-of-order")
-        }, 1500)
-
-      } else if (orderType === "pre-approval") {
-        const orderData = {
-           ...commonOrderData,
-           stage: "Pre-Approval",
-           status: "Pending",
-        }
-
-        const savedHistory = localStorage.getItem("workflowHistory")
-        const history = savedHistory ? JSON.parse(savedHistory) : []
-        history.push({
-           ...orderData,
-           timestamp: new Date().toISOString()
-        })
-        localStorage.setItem("workflowHistory", JSON.stringify(history))
-        localStorage.setItem("orderData", JSON.stringify(orderData))
-
-        toast({
-          title: "Order Saved Successfully",
-          description: "Order has been created and moved to Pre-Approval stage.",
-        })
-        resetForm()
-        setTimeout(() => {
-          router.push("/pre-approval")
-        }, 1500)
+      
+      const orderEntry = {
+          ...commonOrderData,
+          stage: orderType === "regular" ? "Approval Of Order" : "Pre-Approval",
+          status: "Pending" as const,
+          timestamp: new Date().toISOString(),
+          orderType: orderType as "regular" | "pre-approval"
       }
+
+      saveWorkflowHistory(orderEntry)
+      
+      // Keep legacy keys for now to avoid breaking other pages immediately
+      localStorage.setItem("orderData", JSON.stringify(orderEntry))
+      if (orderType === "regular") {
+          localStorage.setItem("commitmentReviewData", JSON.stringify({ orderData: orderEntry }))
+      }
+
+      toast({
+          title: "Order Saved Successfully",
+          description: `Order has been created and moved to ${orderEntry.stage} stage.`,
+      })
+      resetForm()
+      setTimeout(() => {
+          router.push(orderType === "regular" ? "/approval-of-order" : "/pre-approval")
+      }, 1500)
+
     } finally {
       setIsSubmitting(false)
     }
@@ -443,7 +417,7 @@ export default function OrderPunchPage() {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-6 max-w-full space-y-6">
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Stage 1: Order Punch</h1>
@@ -694,8 +668,11 @@ export default function OrderPunchPage() {
                   </div>
                   
                   <div className="space-y-4">
-                    {preApprovalProducts.map((item) => (
-                      <div key={item.id} className="flex gap-4 items-center p-4 border rounded-lg bg-card">
+                    {preApprovalProducts.map((item, idx) => (
+                      <div key={item.id} className="flex gap-4 items-center p-4 border rounded-lg bg-card relative pt-8">
+                         <div className="absolute top-2 left-4 text-[10px] font-bold text-blue-500/80 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase tracking-widest">
+                             Requirement {idx + 1}
+                         </div>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1">
                           
                           <div className="space-y-1">
@@ -775,66 +752,69 @@ export default function OrderPunchPage() {
                       </Button>
                     </div>
                   <div className="space-y-4">
-                    {products.map((product) => (
-                      <div key={product.id} className="flex gap-4 items-center p-4 border rounded-lg bg-card">
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4 flex-1">
+                    {products.map((product, idx) => (
+                      <div key={product.id} className="flex gap-4 items-end p-4 border rounded-lg bg-card shadow-sm relative pt-8">
+                         <div className="absolute top-2 left-4 text-[10px] font-bold text-blue-500/80 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 uppercase tracking-widest">
+                             Product {idx + 1}
+                         </div>
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 flex-1">
                           
-                          <div className="space-y-1">
-                             <Label className="text-xs text-muted-foreground">Product Name</Label>
+                          <div className="space-y-1.5 flex-1">
+                             <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Product Name</Label>
                              <Input
                               value={product.productName}
                               onChange={(e) => updateProduct(product.id, "productName", e.target.value)}
                               placeholder="Product name"
-                              className="bg-background h-9"
+                              className="bg-background h-10 border-slate-200 focus:border-blue-400 focus:ring-blue-400"
                             />
                           </div>
 
-                          <div className="space-y-1">
-                             <Label className="text-xs text-muted-foreground">UOM</Label>
+                          <div className="space-y-1.5 flex-1">
+                             <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">UOM</Label>
                              <Input
                               value={product.uom}
                               onChange={(e) => updateProduct(product.id, "uom", e.target.value)}
                               placeholder="UOM"
-                              className="bg-background h-9"
+                              className="bg-background h-10 border-slate-200 focus:border-blue-400 focus:ring-blue-400"
                             />
                           </div>
 
-                          <div className="space-y-1">
-                             <Label className="text-xs text-muted-foreground">Order Qty</Label>
+                          <div className="space-y-1.5 flex-1">
+                             <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Order Qty</Label>
                              <Input
                               type="number"
                               value={product.orderQty}
                               onChange={(e) => updateProduct(product.id, "orderQty", e.target.value)}
                               placeholder="0"
-                              className="bg-background h-9"
+                              className="bg-background h-10 border-slate-200 focus:border-blue-400 focus:ring-blue-400"
                             />
                           </div>
 
-                          <div className="space-y-1">
-                             <Label className="text-xs text-muted-foreground">Alt UOM</Label>
+                          <div className="space-y-1.5 flex-1">
+                             <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Alt UOM</Label>
                              <Input
                               value={product.altUom}
                               onChange={(e) => updateProduct(product.id, "altUom", e.target.value)}
                               placeholder="Alt UOM"
-                              className="bg-background h-9"
+                              className="bg-background h-10 border-slate-200 focus:border-blue-400 focus:ring-blue-400"
                             />
                           </div>
 
-                          <div className="space-y-1">
-                             <Label className="text-xs text-muted-foreground">Alt Qty (Kg)</Label>
+                          <div className="space-y-1.5 flex-1">
+                             <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Alt Qty (Kg)</Label>
                              <Input
                               type="number"
                               value={product.altQty}
                               onChange={(e) => updateProduct(product.id, "altQty", e.target.value)}
                               placeholder="0"
-                              className="bg-background h-9"
+                              className="bg-background h-10 border-slate-200 focus:border-blue-400 focus:ring-blue-400"
                             />
                           </div>
                           
                         </div>
 
                         {/* Action - Delete */}
-                        <div className="flex-none">
+                        <div className="flex-none mb-1">
                           <Button
                             type="button"
                             variant="ghost"
