@@ -233,6 +233,7 @@ export default function PreApprovalPage() {
       endDate: "",
       partyName: ""
   })
+  const [openPopoverId, setOpenPopoverId] = useState<string | null>(null)
 
   const filteredPendingOrders = pendingOrders.filter(order => {
       let matches = true
@@ -435,6 +436,10 @@ export default function PreApprovalPage() {
                                     <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Payment Terms</Label>
                                     <p className="text-sm font-medium text-slate-700">{row.paymentTerms}</p>
                                 </div>
+                                <div className="space-y-1 col-span-2 md:col-span-1">
+                                    <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Products</Label>
+                                    <p className="text-sm font-medium text-slate-700 leading-tight">{row.oilType}</p>
+                                </div>
                                 
                             </div>
                         </div>
@@ -446,12 +451,14 @@ export default function PreApprovalPage() {
                               <div className="w-1.5 h-4 bg-blue-600 rounded-full" />
                               Product List
                             </h3>
-                            {row.products && row.products.length > 0 ? (
-                              row.products.map((product: any) => (
-                                  <div key={product.id} className="border border-slate-200 p-5 rounded-xl bg-white shadow-sm hover:border-blue-200 transition-colors space-y-4">
-                                    <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-end">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                              {row.products && row.products.length > 0 ? (
+                                row.products.map((product: any, prodIdx: number) => {
+                                    const pId = product.id ? String(product.id) : `idx-${prodIdx}`;
+                                    return (
+                                    <div key={pId} className="border border-slate-200 p-5 rounded-xl bg-white shadow-sm hover:border-blue-200 transition-colors flex flex-col gap-4">
                                       {/* Oil Type */}
-                                      <div className="md:col-span-2 space-y-2">
+                                      <div className="space-y-1.5">
                                         <Label className="text-[10px] uppercase font-bold text-slate-500">Oil Type</Label>
                                         <div className="h-10 flex items-center border rounded-lg px-3 bg-slate-50/50">
                                           <p className="text-sm font-bold text-blue-700 truncate">
@@ -461,23 +468,23 @@ export default function PreApprovalPage() {
                                       </div>
                                       
                                       {/* SKU Name */}
-                                      <div className="md:col-span-4 space-y-2">
+                                      <div className="space-y-1.5">
                                         <Label className="text-[10px] uppercase font-bold text-slate-500">SKU Name</Label>
-                                        <Popover>
+                                        <Popover open={openPopoverId === pId} onOpenChange={(open) => setOpenPopoverId(open ? pId : null)}>
                                           <PopoverTrigger asChild>
                                             <Button
                                               variant="outline"
                                               role="combobox"
                                               className={cn(
                                                 "h-10 w-full justify-between bg-white px-3 font-normal border-slate-200 hover:bg-slate-50 transition-colors text-sm",
-                                                !productRates[product.id]?.skuName && "text-muted-foreground"
+                                                !productRates[pId]?.skuName && "text-muted-foreground"
                                               )}
                                             >
-                                              <span className="truncate">{productRates[product.id]?.skuName || "Select SKU.."}</span>
+                                              <span className="truncate">{productRates[pId]?.skuName || "Select SKU.."}</span>
                                               <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                                             </Button>
                                           </PopoverTrigger>
-                                          <PopoverContent className="w-[500px] p-0 shadow-xl border-slate-200" align="start">
+                                          <PopoverContent className="w-[300px] p-0 shadow-xl border-slate-200" align="start">
                                             <Command shouldFilter={false}>
                                               <CommandInput 
                                                   placeholder="Search SKU..." 
@@ -503,18 +510,19 @@ export default function PreApprovalPage() {
                                                       onSelect={() => {
                                                         setProductRates({
                                                           ...productRates,
-                                                          [product.id]: {
-                                                            ...productRates[product.id],
+                                                          [pId]: {
+                                                            ...productRates[pId],
                                                             skuName: sku,
                                                           },
                                                         })
                                                         setSkuSearch("")
+                                                        setOpenPopoverId(null)
                                                       }}
                                                     >
                                                       <Check
                                                         className={cn(
                                                           "mr-2 h-4 w-4 text-blue-600",
-                                                          productRates[product.id]?.skuName === sku
+                                                          productRates[pId]?.skuName === sku
                                                             ? "opacity-100"
                                                             : "opacity-0"
                                                         )}
@@ -529,56 +537,58 @@ export default function PreApprovalPage() {
                                         </Popover>
                                       </div>
 
-                                      {/* Approval Qty */}
-                                      <div className="md:col-span-3 space-y-2">
-                                        <Label className="text-[10px] uppercase font-bold text-slate-500">Approval Qty</Label>
-                                        <Input
-                                          className="h-10 bg-white border-slate-200 focus:bg-white focus:border-blue-300 focus:ring-blue-100 transition-all text-sm"
-                                          type="number"
-                                          placeholder="Enter Qty"
-                                          value={productRates[product.id]?.approvalQty || ""}
-                                          onChange={(e) =>
-                                            setProductRates({
-                                              ...productRates,
-                                              [product.id]: {
-                                                ...productRates[product.id],
-                                                approvalQty: e.target.value,
-                                              },
-                                            })
-                                          }
-                                        />
-                                      </div>
+                                      <div className="grid grid-cols-2 gap-4">
+                                        {/* Approval Qty */}
+                                        <div className="space-y-1.5">
+                                          <Label className="text-[10px] uppercase font-bold text-slate-500">Approval Qty</Label>
+                                          <Input
+                                            className="h-10 bg-white border-slate-200 focus:bg-white focus:border-blue-300 focus:ring-blue-100 transition-all text-sm"
+                                            type="number"
+                                            placeholder="Enter Qty"
+                                            value={productRates[pId]?.approvalQty || ""}
+                                            onChange={(e) =>
+                                              setProductRates({
+                                                ...productRates,
+                                                [pId]: {
+                                                  ...productRates[pId],
+                                                  approvalQty: e.target.value,
+                                                },
+                                              })
+                                            }
+                                          />
+                                        </div>
 
-                                      {/* Required Rate */}
-                                      <div className="md:col-span-3 space-y-2">
-                                        <Label className="text-[10px] uppercase font-bold text-slate-500">Required Rate</Label>
-                                        <Input
-                                          className={cn(
-                                            "h-10 bg-white border-slate-200 focus:bg-white focus:border-blue-300 focus:ring-blue-100 transition-all text-sm font-semibold",
-                                            (parseFloat(productRates[product.id]?.rate || "0") < parseFloat(productRates[product.id]?.approvalQty || "0")) && productRates[product.id]?.rate
-                                              ? "text-red-600 font-bold border-red-200 bg-red-50 focus:bg-red-50" 
-                                              : "text-slate-900"
-                                          )}
-                                          type="number"
-                                          placeholder="Enter Rate"
-                                          value={productRates[product.id]?.rate || ""}
-                                          onChange={(e) =>
-                                            setProductRates({
-                                              ...productRates,
-                                              [product.id]: {
-                                                ...productRates[product.id],
-                                                rate: e.target.value,
-                                              },
-                                            })
-                                          }
-                                        />
+                                        {/* Required Rate */}
+                                        <div className="space-y-1.5">
+                                          <Label className="text-[10px] uppercase font-bold text-slate-500">Required Rate</Label>
+                                          <Input
+                                            className={cn(
+                                              "h-10 bg-white border-slate-200 focus:bg-white focus:border-blue-300 focus:ring-blue-100 transition-all text-sm font-semibold",
+                                              (parseFloat(productRates[pId]?.rate || "0") < parseFloat(productRates[pId]?.approvalQty || "0")) && productRates[pId]?.rate
+                                                ? "text-red-600 font-bold border-red-200 bg-red-50 focus:bg-red-50" 
+                                                : "text-slate-900"
+                                            )}
+                                            type="number"
+                                            placeholder="Enter Rate"
+                                            value={productRates[pId]?.rate || ""}
+                                            onChange={(e) =>
+                                              setProductRates({
+                                                ...productRates,
+                                                [pId]: {
+                                                  ...productRates[pId],
+                                                  rate: e.target.value,
+                                                },
+                                              })
+                                            }
+                                          />
+                                        </div>
                                       </div>
                                     </div>
-                                  </div>
-                              ))
-                            ) : (
-                              <div className="text-muted-foreground text-sm py-10 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">No products added for this order</div>
-                            )}
+                                )})
+                              ) : (
+                                <div className="col-span-full text-muted-foreground text-sm py-10 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">No products added for this order</div>
+                              )}
+                            </div>
                           </div>
 
                           {/* Remarks Section */}

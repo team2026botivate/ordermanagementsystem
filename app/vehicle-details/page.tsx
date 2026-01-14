@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Card } from "@/components/ui/card"
 import { WorkflowStageShell } from "@/components/workflow/workflow-stage-shell"
@@ -20,8 +20,9 @@ import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Settings2 } from "lucide-react"
+import { Settings2, Truck } from "lucide-react"
 import { ALL_WORKFLOW_COLUMNS as ALL_COLUMNS } from "@/lib/workflow-columns"
+import { Checkbox } from "@/components/ui/checkbox"
 
 export default function VehicleDetailsPage() {
   const router = useRouter()
@@ -39,6 +40,7 @@ export default function VehicleDetailsPage() {
   })
 
   const [history, setHistory] = useState<any[]>([])
+  const [selectedItems, setSelectedItems] = useState<any[]>([])
 
   useEffect(() => {
     const savedHistory = localStorage.getItem("workflowHistory")
@@ -51,12 +53,6 @@ export default function VehicleDetailsPage() {
 
       const pending = historyData.filter(
         (item: any) => item.stage === "Actual Dispatch" && item.status === "Completed"
-      ).filter(
-        (item: any) => 
-          !completed.some((completedItem: any) => 
-             (completedItem.doNumber && item.doNumber && completedItem.doNumber === item.doNumber) || 
-             (completedItem.orderNo && item.orderNo && completedItem.orderNo === item.orderNo)
-          )
       )
       setPendingOrders(pending)
 
@@ -71,48 +67,146 @@ export default function VehicleDetailsPage() {
     }
   }, [])
 
-  const handleAssignVehicle = async (order: any) => {
+  /* Filter logic */
+  const [filterValues, setFilterValues] = useState({
+      status: "",
+      startDate: "",
+      endDate: "",
+      partyName: ""
+  })
+
+  const filteredPendingOrders = pendingOrders.filter(order => {
+      let matches = true
+      if (filterValues.partyName && filterValues.partyName !== "all" && order.customerName !== filterValues.partyName) matches = false
+      const orderDateStr = order.actualDispatchData?.confirmedAt || order.timestamp
+      if (orderDateStr) {
+          const orderDate = new Date(orderDateStr)
+          if (filterValues.startDate && orderDate < new Date(filterValues.startDate)) matches = false
+          if (filterValues.endDate && orderDate > new Date(filterValues.endDate)) matches = false
+      }
+      return matches
+  })
+  // Flatten orders for table display
+  const displayRows = useMemo(() => {
+    const rows: any[] = []
+    const processed = new Set<string>();
+
+    filteredPendingOrders.forEach((order) => {
+      const internalOrder = order.data?.orderData || order;
+      const orderId = order.doNumber || order.orderNo;
+      
+      if (order.data?.productInfo) {
+          const p = order.data.productInfo;
+          const pName = p.productName || p.oilType;
+          const pId = p.id || pName || 'no-id';
+          const pk = `${orderId}-${pId}`;
+
+          if (processed.has(pk)) return;
+
+          // Check if THIS specific product is already in history
+          const isDone = history.some(h => 
+            (h.orderNo === orderId) && 
+            (h.data?.orderData?._product?.productName === pName || h.data?.orderData?._product?.oilType === pName)
+          );
+          if (!isDone) {
+            rows.push({ ...order, _product: p });
+            processed.add(pk);
+          }
+          return;
+      }
+
+      let products = internalOrder.products || [];
+      const preAppProducts = internalOrder.preApprovalProducts || [];
+      const allProds = products.length > 0 ? products : preAppProducts;
+
+      if (!allProds || allProds.length === 0) {
+        const pk = `${orderId}-null`;
+        if (processed.has(pk)) return;
+
+        const isDone = history.some(h => 
+            (h.orderNo === orderId) && h._product === null
+        );
+        if (!isDone) {
+          rows.push({ ...order, _product: null });
+          processed.add(pk);
+        }
+      } else {
+        allProds.forEach((prod: any) => {
+          const pName = prod.productName || prod.oilType;
+          const pId = prod.id || pName || 'no-id';
+          const pk = `${orderId}-${pId}`;
+
+          if (processed.has(pk)) return;
+
+          const isDone = history.some(h => 
+            (h.orderNo === orderId) && 
+            (h.data?.orderData?._product?.productName === pName || h.data?.orderData?._product?.oilType === pName)
+          );
+
+          if (!isDone) {
+            rows.push({ ...order, _product: prod });
+            processed.add(pk);
+          }
+        });
+      }
+    })
+    return rows
+  }, [filteredPendingOrders, history])
+
+  const toggleSelectItem = (item: any) => {
+    const key = `${item.doNumber || item.orderNo}-${item._product?.id || item._product?.productName || 'no-id'}`
+    const isSelected = selectedItems.some(i => `${i.doNumber || i.orderNo}-${i._product?.id || i._product?.productName || 'no-id'}` === key)
+    
+    if (isSelected) {
+      setSelectedItems(prev => prev.filter(i => `${i.doNumber || i.orderNo}-${i._product?.id || i._product?.productName || 'no-id'}` !== key))
+    } else {
+      setSelectedItems(prev => [...prev, item])
+    }
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedItems.length === displayRows.length) {
+      setSelectedItems([])
+    } else {
+      setSelectedItems([...displayRows])
+    }
+  }
+
+  const handleAssignVehicle = async () => {
+    if (selectedItems.length === 0) return
     setIsProcessing(true)
     try {
-      const updatedOrder = {
-        ...order,
-        stage: "Vehicle Details",
-        status: "Completed",
-        vehicleData: {
-          ...vehicleData,
-          assignedAt: new Date().toISOString(),
-        },
-      }
-
-      const historyEntry = {
-        ...order,
-        orderNo: order.orderNo || order.doNumber || "DO-XXX",
-        customerName: order.customerName,
-        stage: "Vehicle Details",
-        status: "Completed",
-        processedBy: "Current User",
-        timestamp: new Date().toISOString(),
-        date: new Date().toLocaleDateString("en-GB"),
-        remarks: vehicleData.remarks || "-",
-        vehicleData: { ...vehicleData, assignedAt: new Date().toISOString() }
-      }
-
       const savedHistory = localStorage.getItem("workflowHistory")
       const historyList = savedHistory ? JSON.parse(savedHistory) : []
-      historyList.push(historyEntry)
-      localStorage.setItem("workflowHistory", JSON.stringify(historyList))
-      localStorage.setItem("currentOrderData", JSON.stringify(updatedOrder))
-      
-      // Update local state
-      setHistory([...historyList.filter((h: any) => h.stage === "Vehicle Details"), historyEntry].map((item: any) => ({
-          ...item,
-          date: item.date || (item.timestamp ? new Date(item.timestamp).toLocaleDateString("en-GB") : "-"),
-          remarks: item.remarks || item.vehicleData?.remarks || "-"
-      })))
 
+      selectedItems.forEach((item) => {
+        const historyEntry = {
+          ...item,
+          orderNo: item.orderNo || item.doNumber || "DO-XXX",
+          stage: "Vehicle Details",
+          status: "Completed",
+          processedBy: "Current User",
+          timestamp: new Date().toISOString(),
+          date: new Date().toLocaleDateString("en-GB"),
+          remarks: vehicleData.remarks || "-",
+          vehicleData: { ...vehicleData, assignedAt: new Date().toISOString() },
+          data: {
+              ...(item.data || {}),
+              orderData: {
+                  ...(item.data?.orderData || item),
+                  products: item.orderType === "regular" ? [item._product] : [],
+                  preApprovalProducts: item.orderType !== "regular" ? [item._product] : []
+              }
+          }
+        }
+        historyList.push(historyEntry)
+      })
+
+      localStorage.setItem("workflowHistory", JSON.stringify(historyList))
+      
       toast({
         title: "Vehicle Assigned",
-        description: "Order moved to Material Load stage.",
+        description: `${selectedItems.length} items moved to Material Load stage.`,
       })
 
       setTimeout(() => {
@@ -126,69 +220,88 @@ export default function VehicleDetailsPage() {
   /* Extract unique customer names */
   const customerNames = Array.from(new Set(pendingOrders.map(order => order.customerName || "Unknown")))
 
-  const [filterValues, setFilterValues] = useState({
-      status: "",
-      startDate: "",
-      endDate: "",
-      partyName: ""
-  })
-
-  const filteredPendingOrders = pendingOrders.filter(order => {
-      let matches = true
-      
-      // Filter by Party Name
-      if (filterValues.partyName && filterValues.partyName !== "all" && order.customerName !== filterValues.partyName) {
-          matches = false
-      }
-
-      // Filter by Date Range
-      const orderDateStr = order.actualDispatchData?.confirmedAt || order.timestamp
-      if (orderDateStr) {
-          const orderDate = new Date(orderDateStr)
-          if (filterValues.startDate) {
-              const start = new Date(filterValues.startDate)
-              start.setHours(0,0,0,0)
-              if (orderDate < start) matches = false
-          }
-          if (filterValues.endDate) {
-              const end = new Date(filterValues.endDate)
-              end.setHours(23,59,59,999)
-              if (orderDate > end) matches = false
-          }
-      }
-
-      // Filter by Status (On Time / Expire)
-      if (filterValues.status) {
-          const today = new Date()
-          today.setHours(0, 0, 0, 0)
-          const targetDateStr = order.deliveryDate || order.timestamp
-          if (targetDateStr) {
-             const targetDate = new Date(targetDateStr)
-             
-             if (filterValues.status === "expire") {
-                 if (targetDate < today) matches = true
-                 else matches = false
-             } else if (filterValues.status === "on-time") {
-                 if (targetDate >= today) matches = true
-                 else matches = false
-             }
-          }
-      }
-
-      return matches
-  })
-
   return (
     <WorkflowStageShell
       title="Stage 6: Vehicle Details"
       description="Assign vehicle and driver for delivery."
-      pendingCount={filteredPendingOrders.length}
+      pendingCount={displayRows.length}
       historyData={history}
       partyNames={customerNames}
       onFilterChange={setFilterValues}
     >
       <div className="space-y-4">
         <div className="flex justify-end gap-2">
+          <Dialog>
+            <DialogTrigger asChild>
+                <Button disabled={selectedItems.length === 0} className="bg-purple-600 hover:bg-purple-700">
+                    <Truck className="mr-2 h-4 w-4" />
+                    Assign Vehicle ({selectedItems.length})
+                </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-lg">
+                <DialogHeader>
+                    <DialogTitle className="text-xl font-bold text-slate-900 leading-none">Vehicle Details Assignment ({selectedItems.length} items)</DialogTitle>
+                </DialogHeader>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 shadow-sm mt-4">
+                    <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70 block px-1 mb-3">Selected Items ({selectedItems.length})</Label>
+                    <div className="max-h-[180px] overflow-y-auto grid grid-cols-1 md:grid-cols-2 gap-3 pr-2 scrollbar-hide">
+                        {selectedItems.map((item, idx) => (
+                            <div key={idx} className="bg-white p-3 border border-slate-200 rounded-xl shadow-sm flex flex-col gap-1.5 relative overflow-hidden group hover:border-blue-200 transition-all">
+                                <div className="absolute top-0 right-0 py-0.5 px-2 bg-slate-50 border-l border-b border-slate-100 rounded-bl-lg">
+                                   <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">{item.orderType || "—"}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                   <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-1">DO-No: {item.doNumber || item.orderNo}</span>
+                                   <h4 className="text-xs font-bold text-slate-800 leading-tight truncate pr-16">{item.customerName || "—"}</h4>
+                                </div>
+                                <div className="pt-2 border-t border-slate-50 mt-0.5">
+                                   <div className="flex items-center gap-1.5">
+                                      <div className="w-1 h-1 rounded-full bg-blue-500" />
+                                      <span className="text-xs font-bold text-blue-600 truncate">
+                                        {item._product?.productName || item._product?.oilType || "—"}
+                                      </span>
+                                   </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="space-y-4 py-4">
+                    <div className="">
+                    <h4 className="text-sm font-medium mb-4 text-muted-foreground">Vehicle Documents</h4>
+                    <div className="grid grid-cols-2 gap-4 text-xs">
+                        <div className="space-y-1"><Label>Fitness Copy</Label><Input type="file" className="h-8 text-[10px]" /></div>
+                        <div className="space-y-1"><Label>Insurance</Label><Input type="file" className="h-8 text-[10px]" /></div>
+                        <div className="space-y-1"><Label>Tax Copy</Label><Input type="file" className="h-8 text-[10px]" /></div>
+                        <div className="space-y-1"><Label>Pollution Check</Label><Input type="file" className="h-8 text-[10px]" /></div>
+                    </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 border-t pt-4">
+                        <div className="space-y-2">
+                            <Label>Check Status</Label>
+                            <Select value={vehicleData.checkStatus} onValueChange={(v) => setVehicleData({...vehicleData, checkStatus: v})}>
+                                <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="Accept">Accept</SelectItem>
+                                    <SelectItem value="Reject">Reject</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label>Remarks</Label>
+                            <Input value={vehicleData.remarks} onChange={(e) => setVehicleData({...vehicleData, remarks: e.target.value})} placeholder="Remarks" />
+                        </div>
+                    </div>
+                </div>
+                <DialogFooter>
+                    <Button onClick={handleAssignVehicle} disabled={!vehicleData.checkStatus || isProcessing}>
+                        {isProcessing ? "Processing..." : "Confirm & Assign"}
+                    </Button>
+                </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="bg-transparent">
@@ -219,7 +332,9 @@ export default function VehicleDetailsPage() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
               <TableRow>
-                <TableHead className="w-[80px]">Action</TableHead>
+                <TableHead className="w-12 text-center">
+                    <Checkbox checked={displayRows.length > 0 && selectedItems.length === displayRows.length} onCheckedChange={toggleSelectAll} />
+                </TableHead>
                 {ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
                   <TableHead key={col.id} className="whitespace-nowrap text-center">
                     {col.label}
@@ -228,147 +343,45 @@ export default function VehicleDetailsPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredPendingOrders.length > 0 ? (
-                filteredPendingOrders.map((order, index) => {
-                    const prodNames = order.products?.map((p: any) => p.productName).join(", ") || "";
-                    const uoms = order.products?.map((p: any) => p.uom).join(", ") || "";
-                    const qtys = order.products?.map((p: any) => p.orderQty).join(", ") || "";
-                    const altUoms = order.products?.map((p: any) => p.altUom).join(", ") || "";
-                    const altQtys = order.products?.map((p: any) => p.altQty).join(", ") || "";
+              {displayRows.length > 0 ? (
+                displayRows.map((item, index) => {
+                    const order = item;
+                    const p = order._product;
+                    const rowKey = `${order.doNumber || order.orderNo}-${p?.id || p?.productName || 'no-id'}`;
                     
-                    const ratesLtr = order.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || order.ratePerLtr || "—";
-                    const rates15Kg = order.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || order.rateLtr || "—";
-                    const oilTypes = order.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || order.oilType || "—";
+                    const prodName = p?.productName || p?.oilType || "—";
+                    const rateLtr = p?.ratePerLtr || p?.rateLtr || order.ratePerLtr || "—";
+                    const rate15Kg = p?.ratePer15Kg || p?.rateLtr || order.rateLtr || "—";
+                    const oilType = p?.oilType || order.oilType || "—";
 
                     const row = {
                       orderNo: order.doNumber || order.orderNo || "DO-XXX",
-                      deliveryPurpose: order.orderPurpose || "—",
-                      customerType: order.customerType || "—",
-                      orderType: order.orderType || "—",
-                      soNo: order.soNumber || "—",
-                      partySoDate: order.soDate || "—",
                       customerName: order.customerName || "—",
-                      itemConfirm: order.itemConfirm || "—",
-                      productName: prodNames,
-                      uom: uoms,
-                      orderQty: qtys,
-                      altUom: altUoms,
-                      altQty: altQtys,
-                      oilType: oilTypes,
-                      ratePerLtr: ratesLtr,
-                      ratePer15Kg: rates15Kg,
-                      rateOfMaterial: order.rateMaterial || "—",
-                      totalWithGst: order.totalWithGst || "—",
+                      productName: prodName,
+                      oilType: oilType,
+                      ratePerLtr: rateLtr,
+                      ratePer15Kg: rate15Kg,
                       transportType: order.dispatchData?.transportType || "—",
-                      uploadSo: "so_document.pdf",
-                      contactPerson: order.contactPerson || "—",
-                      whatsapp: order.whatsappNo || "—",
-                      address: order.customerAddress || "—",
-                      paymentTerms: order.paymentTerms || "—",
-                      advanceTaken: order.advancePaymentTaken || "—",
-                      advanceAmount: order.advanceAmount || "—",
-                      isBroker: order.isBrokerOrder || "—",
-                      brokerName: order.brokerName || "—",
                       deliveryDate: order.deliveryDate || "—",
                       qtyToDispatch: order.dispatchData?.qtyToDispatch || "—",
                       deliveryFrom: order.deliveryData?.deliveryFrom || "—",
-                      status: "Awaiting Vehicle", // Special handling for badge
+                      status: "Awaiting Vehicle",
                     }
 
                    return (
-                   <TableRow key={index}>
-                     <TableCell>
-                       <Dialog>
-                         <DialogTrigger asChild>
-                           <Button size="sm">Assign Vehicle</Button>
-                         </DialogTrigger>
-                         <DialogContent className="max-w-lg">
-                           <DialogHeader>
-                             <DialogTitle>Vehicle Details: {order.orderNo || "DO-005A"}</DialogTitle>
-                           </DialogHeader>
-                           <div className="space-y-4 py-4">
-                             <div className="">
-                               <h4 className="text-sm font-medium mb-4 text-muted-foreground">Vehicle Documents</h4>
-                               <div className="grid grid-cols-2 gap-4">
-                                 <div className="space-y-2">
-                                   <Label>Fitness Certificate</Label>
-                                   <Input type="file" />
-                                 </div>
-                                 <div className="space-y-2">
-                                   <Label>Insurance</Label>
-                                   <Input type="file" />
-                                 </div>
-                                 <div className="space-y-2">
-                                   <Label>Tax Copy</Label>
-                                   <Input type="file" />
-                                 </div>
-                                 <div className="space-y-2">
-                                   <Label>Pollution Check</Label>
-                                   <Input type="file" />
-                                 </div>
-                                 <div className="space-y-2">
-                                   <Label>Permit 1</Label>
-                                   <Input type="file" />
-                                 </div>
-                                 <div className="space-y-2">
-                                   <Label>Permit 2 (Out State)</Label>
-                                   <Input type="file" />
-                                 </div>
-                               </div>
+                   <TableRow key={rowKey} className={selectedItems.some(i => `${i.doNumber || i.orderNo}-${i._product?.id || i._product?.productName || 'no-id'}` === rowKey) ? "bg-purple-50/50" : ""}>
+                      <TableCell className="text-center">
+                        <Checkbox checked={selectedItems.some(i => `${i.doNumber || i.orderNo}-${i._product?.id || i._product?.productName || 'no-id'}` === rowKey)} onCheckedChange={() => toggleSelectItem(item)} />
+                      </TableCell>
+                      {ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
+                        <TableCell key={col.id} className="whitespace-nowrap text-center text-xs">
+                          {col.id === "status" ? (
+                             <div className="flex justify-center">
+                                <Badge className="bg-purple-100 text-purple-700">Awaiting Vehicle</Badge>
                              </div>
-
-                             <div className="border-t pt-4 mt-4 space-y-4">
-                               <div className="grid grid-cols-2 gap-4">
-                                 <div className="space-y-2">
-                                   <Label>Check Status</Label>
-                                   <Select
-                                     value={vehicleData.checkStatus}
-                                     onValueChange={(value) =>
-                                       setVehicleData({ ...vehicleData, checkStatus: value })
-                                     }
-                                   >
-                                     <SelectTrigger>
-                                       <SelectValue placeholder="Select status" />
-                                     </SelectTrigger>
-                                     <SelectContent>
-                                       <SelectItem value="Accept">Accept</SelectItem>
-                                       <SelectItem value="Reject">Reject</SelectItem>
-                                     </SelectContent>
-                                   </Select>
-                                 </div>
-                                 <div className="space-y-2">
-                                   <Label>Remarks</Label>
-                                   <Input
-                                     value={vehicleData.remarks}
-                                     onChange={(e) =>
-                                       setVehicleData({ ...vehicleData, remarks: e.target.value })
-                                     }
-                                     placeholder="Enter remarks"
-                                   />
-                                 </div>
-                               </div>
-                             </div>
-                           </div>
-                           <DialogFooter>
-                             <Button
-                               onClick={() => handleAssignVehicle(order)}
-                               disabled={!vehicleData.checkStatus || isProcessing}
-                             >
-                               {isProcessing ? "Processing..." : "Assign Vehicle"}
-                             </Button>
-                           </DialogFooter>
-                         </DialogContent>
-                       </Dialog>
-                     </TableCell>
-                     {ALL_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
-                       <TableCell key={col.id} className="whitespace-nowrap text-center">
-                         {col.id === "status" ? (
-                            <div className="flex justify-center">
-                               <Badge className="bg-purple-100 text-purple-700">Awaiting Vehicle</Badge>
-                            </div>
-                         ) : row[col.id as keyof typeof row]}
-                       </TableCell>
-                     ))}
+                          ) : (row as any)[col.id] || "—"}
+                        </TableCell>
+                      ))}
                    </TableRow>
                    )
                 })

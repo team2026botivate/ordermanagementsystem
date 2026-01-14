@@ -10,10 +10,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { useToast } from "@/hooks/use-toast"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Settings2 } from "lucide-react"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Settings2, CheckCircle2 } from "lucide-react"
 import { saveWorkflowHistory } from "@/lib/storage-utils"
 
 
@@ -111,35 +112,57 @@ export default function CommitmentReviewPage() {
       setHistory(formattedHistory)
     }
       
-      // LOGIC: Use a "Latest Stage" approach to determine pending items from history.
-      const latestStatusByOrder = new Map();
-      historyData.forEach((entry: any) => {
-          const key = entry.orderNo || entry.doNumber
-          if (key) {
-            latestStatusByOrder.set(key, entry);
-          }
-      });
+      // LOGIC: Collect all products that reached Pre-Approval Completed
+      // And subtract those that reached Approval Of Order Completed
+      const ordersInPreApproval = historyData.filter((h: any) => h.stage === "Pre-Approval" && h.status === "Completed");
+      const itemsInApproval = historyData.filter((h: any) => (h.stage === "Approval Of Order" || h.stage === "Commitment Review") && (h.status === "Approved" || h.status === "Rejected"));
 
       const pendingFromHistory: any[] = [];
-      latestStatusByOrder.forEach((entry, orderNo) => {
-          // Case 1: Pre-Approval Completed -> Ready for Approval
-          if (entry.stage === "Pre-Approval" && entry.status === "Completed") {
-               // Merge metadata from pre-approval into the order object so it's carried forward
-               const rawOrder = entry.data?.orderData || entry.data || entry;
-               const orderData = {
-                   ...rawOrder,
-                   preApprovalData: entry.data // Keep the full pre-approval context
-               }
-               // Attach the remark
-               if (entry.data?.overallRemark) {
-                   orderData.preApprovalRemark = entry.data.overallRemark;
-               }
-               pendingFromHistory.push(orderData);
+      
+      ordersInPreApproval.forEach((entry: any) => {
+          const rawOrder = entry.data?.orderData || entry.data || entry;
+          const orderNo = entry.orderNo || entry.doNumber;
+          
+          // Get all products in this order
+          const products = rawOrder.products || rawOrder.preApprovalProducts || [];
+          const preApprovalProducts = rawOrder.preApprovalProducts || [];
+          
+          // Filter products that aren't done yet
+          const remainingProducts = products.filter((p: any) => {
+              const pName = p.productName || p.oilType;
+              return !itemsInApproval.some((h: any) => 
+                  (h.orderNo === orderNo) && 
+                  (h.data?.orderData?._product?.productName === pName || h.data?.orderData?._product?.oilType === pName)
+              );
+          });
+
+          const remainingPreApp = preApprovalProducts.filter((p: any) => {
+              const pName = p.productName || p.oilType;
+              return !itemsInApproval.some((h: any) => 
+                  (h.orderNo === orderNo) && 
+                  (h.data?.orderData?._product?.productName === pName || h.data?.orderData?._product?.oilType === pName)
+              );
+          });
+
+          if (remainingProducts.length > 0 || remainingPreApp.length > 0 || (products.length === 0 && preApprovalProducts.length === 0)) {
+              const orderData = {
+                  ...rawOrder,
+                  products: remainingProducts,
+                  preApprovalProducts: remainingPreApp,
+                  preApprovalData: entry.data
+              }
+              if (entry.data?.overallRemark) {
+                  orderData.preApprovalRemark = entry.data.overallRemark;
+              }
+              pendingFromHistory.push(orderData);
           }
-          // Case 2: Regular Order from History directly (if stored there by punch)
-          else if (entry.stage === "Approval Of Order" && entry.status === "Pending") {
-               const orderData = entry; 
-               pendingFromHistory.push(orderData);
+      });
+      
+      // Also handle manually added Pending entries
+      historyData.forEach((entry: any) => {
+          if (entry.stage === "Approval Of Order" && entry.status === "Pending") {
+              const exists = pendingFromHistory.some(o => (o.doNumber || o.orderNo) === (entry.doNumber || entry.orderNo));
+              if (!exists) pendingFromHistory.push(entry);
           }
       });
       
@@ -206,110 +229,161 @@ export default function CommitmentReviewPage() {
   }
 
   const handleConfirmCommitment = async () => {
-    if (!selectedOrder) return;
+    if (selectedItems.length === 0) return;
     
     setIsConfirming(true)
     try {
       const hasRejection = Object.values(checklistValues).includes("reject")
+      const timestamp = new Date().toISOString()
+      
+      // Process each selected item individually
+      for (const item of selectedItems) {
+        const orderIdentifier = item.doNumber || item.soNumber || item.orderNo || "ORD-XXX";
+        const productName = item._product?.productName || item._product?.oilType || "Unknown";
 
-      // Identify Order Number consistently
-      const orderIdentifier = selectedOrder.doNumber || selectedOrder.soNumber || selectedOrder.orderNo || "ORD-XXX";
+        // Create a focused order object with ONLY the approved/rejected product
+        const focusedOrderData = {
+            ...item,
+            products: item.orderType === "regular" ? [item._product] : [],
+            preApprovalProducts: item.orderType === "pre-approval" ? [item._product] : (item.preApprovalProducts?.some((p: any) => p.oilType) ? [item._product] : []),
+            _product: item._product // keep for reference
+        };
 
-      // Cleanup local storage if this matches the single-item buffer
-      const savedCommitmentData = localStorage.getItem("commitmentReviewData")
-      if (savedCommitmentData) {
-          try {
-              const parsed = JSON.parse(savedCommitmentData)
-              const directOrderNo = parsed?.orderData?.doNumber || parsed?.orderData?.orderNo
-              if (directOrderNo === orderIdentifier) {
-                  localStorage.removeItem("commitmentReviewData")
+        if (hasRejection) {
+          const historyEntry = {
+            orderNo: orderIdentifier,
+            customerName: item.customerName || "Unknown",
+            stage: "Approval Of Order",
+            status: "Rejected" as const,
+            processedBy: "Current User",
+            timestamp: timestamp,
+            remarks: `Rejected: ${productName}`,
+            data: {
+              orderData: focusedOrderData,
+              checklistResults: checklistValues,
+              rejectedAt: timestamp,
+            },
+            orderType: item.orderType || "regular"
+          }
+          saveWorkflowHistory(historyEntry)
+        } else {
+          const finalData = {
+            orderData: {
+              ...focusedOrderData,
+              deliveryData: {
+                  deliveryFrom: sourceOfMaterial
               }
-          } catch (e) {}
-      }
-
-      if (hasRejection) {
-        const historyEntry = {
-          orderNo: orderIdentifier,
-          customerName: selectedOrder.customerName || "Unknown",
-          stage: "Approval Of Order",
-          status: "Rejected" as const,
-          processedBy: "Current User",
-          timestamp: new Date().toISOString(),
-          remarks: "Rejected by User",
-          data: {
-            orderData: selectedOrder,
+            },
             checklistResults: checklistValues,
-            rejectedAt: new Date().toISOString(),
-          },
-          orderType: selectedOrder.orderType || "regular"
-        }
+            confirmedAt: timestamp,
+            status: "Approved",
+          }
 
-        saveWorkflowHistory(historyEntry)
+          const historyEntry = {
+            orderNo: orderIdentifier,
+            customerName: item.customerName || "Unknown",
+            stage: "Approval Of Order",
+            status: "Approved" as const,
+            processedBy: "Current User",
+            timestamp: timestamp,
+            remarks: `Verified & Approved: ${productName}`,
+            data: finalData,
+            orderType: item.orderType || "regular"
+          }
 
-        toast({
-          title: "Order Rejected",
-          description: "Order has been rejected and saved to history.",
-          variant: "destructive",
-        })
-
-      } else {
-        const finalData = {
-          orderData: {
-            ...selectedOrder,
-            deliveryData: {
-                deliveryFrom: sourceOfMaterial
-            }
-          },
-          checklistResults: checklistValues,
-          confirmedAt: new Date().toISOString(),
-          status: "Approved",
-        }
-
-        const historyEntry = {
-          orderNo: orderIdentifier,
-          customerName: selectedOrder.customerName || "Unknown",
-          stage: "Approval Of Order",
-          status: "Approved" as const,
-          processedBy: "Current User",
-          timestamp: new Date().toISOString(),
-          remarks: "Verified & Approved",
-          data: finalData,
-          orderType: selectedOrder.orderType || "regular"
-        }
-
-        saveWorkflowHistory(historyEntry)
-        
-        // Update local state immediately
-        setHistory((prev) => [...prev, historyEntry])
-        
-        const newPending = pendingOrders.filter(o => (o.doNumber || o.orderNo) !== orderIdentifier)
-        setPendingOrders(newPending)
-
-        // Update persisted list as well
-        const savedPending = localStorage.getItem("approvalPendingItems")
-        if (savedPending) {
-           const list = JSON.parse(savedPending)
-           const updatedList = list.filter((o: any) => (o.doNumber || o.orderNo) !== orderIdentifier)
-           localStorage.setItem("approvalPendingItems", JSON.stringify(updatedList))
-        }
-
-        setSelectedOrder(null)
-
-        toast({
-          title: "Commitment Verified",
-          description: "Order has been approved and moved to Dispatch Material.",
-        })
-        
-        // Don't auto-redirect if there are more items, unless user wants to follow the flow. 
-        // For now, staying on page is better for bulk processing, or we can redirect if list is empty.
-        if (pendingOrders.length <= 1) {
-             setTimeout(() => {
-               router.push("/dispatch-material")
-             }, 1000)
+          saveWorkflowHistory(historyEntry)
+          setHistory((prev) => [...prev, historyEntry])
         }
       }
+
+      // Update persisted list by REMOVING only the selected products, not the whole order
+      const savedPending = localStorage.getItem("approvalPendingItems")
+      if (savedPending) {
+         const list = JSON.parse(savedPending)
+         
+         const updatedList = list.map((o: any) => {
+             const oId = o.doNumber || o.orderNo;
+             const itemsForThisOrder = selectedItems.filter(item => (item.doNumber || item.orderNo) === oId);
+             
+             if (itemsForThisOrder.length === 0) return o;
+             
+             // Use a composite key for matching products to remove
+             const processedKeys = new Set(itemsForThisOrder.map(item => 
+                 `${item._product?.productName || item._product?.oilType}-${item._product?.uom || '—'}-${item._product?.orderQty || '—'}`
+             ));
+             
+             const remainingProducts = (o.products || []).filter((p: any) => {
+                 const pKey = `${p.productName || p.oilType}-${p.uom || '—'}-${p.orderQty || '—'}`;
+                 return !processedKeys.has(pKey);
+             });
+             
+             const remainingPreAppProducts = (o.preApprovalProducts || []).filter((p: any) => {
+                 const pKey = `${p.productName || p.oilType}-${p.uom || '—'}-${p.orderQty || '—'}`;
+                 return !processedKeys.has(pKey);
+             });
+             
+             return {
+                 ...o,
+                 products: remainingProducts,
+                 preApprovalProducts: remainingPreAppProducts
+             };
+         }).filter((o: any) => {
+             // Keep the order if it still has products or if it's a special type
+             return (o.products?.length > 0 || o.preApprovalProducts?.length > 0);
+         });
+
+         localStorage.setItem("approvalPendingItems", JSON.stringify(updatedList))
+         setPendingOrders(updatedList)
+      }
+
+      toast({
+        title: hasRejection ? "Orders Rejected" : "Commitment Verified",
+        description: `${selectedItems.length} items have been processed.`,
+        variant: hasRejection ? "destructive" : "default",
+      })
+
+      if (pendingOrders.length <= selectedItems.length) {
+           setTimeout(() => {
+             router.push("/dispatch-material")
+           }, 1000)
+      }
+      setSelectedItems([])
+      setSelectedOrder(null)
     } finally {
       setIsConfirming(false)
+    }
+  }
+
+  const [selectedItems, setSelectedItems] = useState<any[]>([])
+
+  const toggleSelectItem = (item: any) => {
+    const key = `${item.doNumber || item.orderNo}-${item._product?.productName || item._product?.oilType || 'no-prod'}`
+    const isSelected = selectedItems.some(i => `${i.doNumber || i.orderNo}-${i._product?.productName || i._product?.oilType || 'no-prod'}` === key)
+    
+    if (isSelected) {
+      setSelectedItems(prev => prev.filter(i => `${i.doNumber || i.orderNo}-${i._product?.productName || i._product?.oilType || 'no-prod'}` !== key))
+    } else {
+      setSelectedItems(prev => [...prev, item])
+    }
+  }
+
+  const toggleSelectAll = () => {
+    if (selectedItems.length === displayRows.length) {
+      setSelectedItems([])
+    } else {
+      setSelectedItems([...displayRows])
+    }
+  }
+
+  const handleBulkVerifyOpen = (open: boolean) => {
+    if (!open) {
+      setSelectedOrder(null)
+    } else {
+      // Pick the first one as representative for the dialog fields, 
+      // but the process will apply to all selected items
+      if (selectedItems.length > 0) {
+        setSelectedOrder(selectedItems[0])
+      }
     }
   }
 
@@ -376,20 +450,156 @@ export default function CommitmentReviewPage() {
       return matches
   })
 
+  // Flatten orders for table display
+  const displayRows = useMemo(() => {
+    const rows: any[] = []
+    filteredPendingOrders.forEach((order) => {
+      const isRegular = order.orderType === "regular" || order.stage === "Approval Of Order";
+      const hasPreApproval = order.preApprovalProducts?.some((p: any) => p.oilType);
+
+      let products: any[] = [];
+      
+      if (isRegular) {
+        products = order.products || order.data?.products || order.orderData?.products || order.data?.orderData?.products || [];
+        if (products.length === 0 && hasPreApproval) {
+          products = order.preApprovalProducts;
+        }
+      } else {
+        products = hasPreApproval ? order.preApprovalProducts : (order.products || []);
+      }
+
+      if (!products || products.length === 0) {
+        // Only push if not already verified in history
+        const isVerified = history.some(h => 
+            (h.orderNo === (order.doNumber || order.orderNo)) && h._product === null
+        );
+        if (!isVerified) rows.push({ ...order, _product: null })
+      } else {
+        products.forEach((prod: any) => {
+          // Check if THIS specific product is already verified in history
+          const pName = prod.productName || prod.oilType;
+          const isVerified = history.some(h => 
+            (h.orderNo === (order.doNumber || order.orderNo)) && 
+            (h.data?.orderData?._product?.productName === pName || h.data?.orderData?._product?.oilType === pName)
+          );
+
+          if (!isVerified) {
+            rows.push({ ...order, _product: prod })
+          }
+        });
+      }
+    })
+    return rows
+  }, [filteredPendingOrders, history])
+
   return (
     <WorkflowStageShell
       title="Stage 3: Approval Of Order"
       description="Six-point verification check before commitment entry."
-      pendingCount={filteredPendingOrders.length}
+      pendingCount={displayRows.length}
       historyData={history}
         partyNames={customerNames}
         onFilterChange={setFilterValues}
     >
       <div className="space-y-4">
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <Dialog open={selectedOrder !== null} onOpenChange={handleBulkVerifyOpen}>
+              <DialogTrigger asChild>
+                <Button 
+                  disabled={selectedItems.length === 0}
+                  className="bg-blue-600 hover:bg-blue-700 shadow-md transition-all active:scale-95"
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Verify Selected ({selectedItems.length})
+                </Button>
+              </DialogTrigger>
+                <DialogContent className="sm:max-w-6xl !max-w-6xl max-h-[95vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                <DialogHeader className="border-b pb-4">
+                  <DialogTitle className="text-xl font-bold text-slate-900 leading-none">
+                    Bulk Approval: {selectedItems.length > 1 ? `${selectedItems.length} Items Selected` : (selectedOrder?.doNumber || "Order Verification")}
+                  </DialogTitle>
+                  <DialogDescription className="text-slate-500 mt-1.5">Verify order details and complete the six-point check for commitment.</DialogDescription>
+                </DialogHeader>
+
+                {/* Selected Items Detail Section */}
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm mt-4">
+                    <div className="space-y-3">
+                        <Label className="text-[10px] font-bold uppercase tracking-wider text-blue-600/70 block px-1">Selected Items ({selectedItems.length})</Label>
+                        <div className="max-h-[300px] overflow-y-auto grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pr-2 scrollbar-hide">
+                            {selectedItems.map((item, idx) => (
+                                <div key={idx} className="bg-white p-3 border border-slate-200 rounded-xl shadow-sm flex flex-col gap-1.5 relative overflow-hidden group hover:border-blue-200 transition-all">
+                                    <div className="absolute top-0 right-0 py-0.5 px-2 bg-slate-50 border-l border-b border-slate-100 rounded-bl-lg">
+                                       <span className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">{item.orderType || "—"}</span>
+                                    </div>
+                                    <div className="flex flex-col">
+                                       <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider leading-none mb-1">DO-No: {item.doNumber || item.orderNo}</span>
+                                       <h4 className="text-xs font-bold text-slate-800 leading-tight truncate pr-16">{item.customerName || "—"}</h4>
+                                    </div>
+                                    <div className="pt-2 border-t border-slate-50 mt-0.5">
+                                       <div className="flex items-center gap-1.5">
+                                          <div className="w-1 h-1 rounded-full bg-blue-500" />
+                                          <span className="text-xs font-bold text-blue-600 truncate">
+                                            {item._product?.productName || item._product?.oilType || "—"}
+                                          </span>
+                                       </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="py-6 space-y-4">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 px-1 uppercase tracking-tight">
+                    <div className="w-1.5 h-4 bg-blue-600 rounded-full" />
+                    Six-Point Verification
+                  </h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {checkItems.map((item) => (
+                      <div key={item.id} className="flex items-center justify-between p-4 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-slate-200 transition-colors">
+                        <Label className="text-sm font-semibold text-slate-700">{item.label}</Label>
+                        <RadioGroup
+                          value={checklistValues[item.id]}
+                          onValueChange={(value) => handleChecklistChange(item.id, value)}
+                          className="flex gap-6"
+                        >
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="approve" id={`${item.id}-ok`} className="text-green-600" />
+                            <Label htmlFor={`${item.id}-ok`} className="text-sm font-medium text-green-600 cursor-pointer">
+                              Approve
+                            </Label>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <RadioGroupItem value="reject" id={`${item.id}-no`} className="text-red-600" />
+                            <Label htmlFor={`${item.id}-no`} className="text-sm font-medium text-red-600 cursor-pointer">
+                              Reject
+                            </Label>
+                          </div>
+                        </RadioGroup>
+                      </div>
+                    ))}
+                  </div>
+               </div>
+               <DialogFooter className="border-t pt-4 sm:justify-center">
+                 <Button
+                   onClick={handleConfirmCommitment}
+                   disabled={isConfirming}
+                   className="min-w-[300px] px-8 h-11 text-base font-bold shadow-lg shadow-blue-100 transition-all hover:scale-[1.01] active:scale-[0.99]"
+                   variant={Object.values(checklistValues).includes("reject") ? "destructive" : "default"}
+                 >
+                   {isConfirming
+                     ? "Processing..."
+                     : Object.values(checklistValues).includes("reject")
+                       ? "Reject & Save to History"
+                       : `Approve ${selectedItems.length} Item(s)`}
+                 </Button>
+               </DialogFooter>
+             </DialogContent>
+          </Dialog>
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="ml-auto bg-transparent">
+              <Button variant="outline" className="bg-transparent">
                 <Settings2 className="mr-2 h-4 w-4" />
                 Columns
               </Button>
@@ -417,7 +627,12 @@ export default function CommitmentReviewPage() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
               <TableRow>
-                <TableHead className="w-[80px]">Action</TableHead>
+                <TableHead className="w-[50px] text-center">
+                    <Checkbox 
+                        checked={displayRows.length > 0 && selectedItems.length === displayRows.length}
+                        onCheckedChange={toggleSelectAll}
+                    />
+                </TableHead>
                 {PAGE_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
                   <TableHead key={col.id} className="whitespace-nowrap text-center">
                     {col.label}
@@ -426,18 +641,10 @@ export default function CommitmentReviewPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredPendingOrders.length > 0 ? (
-                filteredPendingOrders.map((order: any, index: number) => {
-                   // Ensure rate arrays are handled if they exist in preApprovalProducts, else fallback to root props
-                   const prodNames = order.products?.map((p: any) => p.productName).join(", ") || "";
-                   const uoms = order.products?.map((p: any) => p.uom).join(", ") || "";
-                   const qtys = order.products?.map((p: any) => p.orderQty).join(", ") || "";
-                   const altUoms = order.products?.map((p: any) => p.altUom).join(", ") || "";
-                   const altQtys = order.products?.map((p: any) => p.altQty).join(", ") || "";
+              {displayRows.length > 0 ? (
+                displayRows.map((order: any, index: number) => {
+                   const p = order._product;
                    
-                   const ratesLtr = order.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || order.ratePerLtr || "—";
-                   const rates15Kg = order.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || order.rateLtr || "—";
-
                    const CUSTOMER_MAP: Record<string, string> = {
                      cust1: "Acme Corp",
                      cust2: "Global Industries",
@@ -450,24 +657,21 @@ export default function CommitmentReviewPage() {
                      customerType: order.customerType || "—",
                      orderType: order.orderType || "—",
                      soNo: order.soNumber || "—",
-                     partySoDate: order.soDate || "—",
+                     partySoDate: order.soDate || order.partySoDate || "—",
                      customerName: CUSTOMER_MAP[order.customerName] || order.customerName || "—",
-                     // New Date Columns
                      startDate: order.startDate || "—",
                      endDate: order.endDate || "—",
                      deliveryDate: order.deliveryDate || "—",
                      
-                     // Rates
-                     oilType: order.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || order.oilType || "—",
-                     ratePerLtr: ratesLtr,
-                     ratePer15Kg: rates15Kg,
-
-                     // Product Details
-                     productName: prodNames,
-                     uom: uoms,
-                     orderQty: qtys,
-                     altUom: altUoms,
-                     altQty: altQtys,
+                     // Rates & Product Details - Single product from flattened row
+                     oilType: p?.oilType || order.oilType || "—",
+                     ratePerLtr: p?.ratePerLtr || order.ratePerLtr || "—",
+                     ratePer15Kg: p?.rateLtr || order.rateLtr || "—",
+                     productName: p?.productName || p?.oilType || "—",
+                     uom: p?.uom || "—",
+                     orderQty: p?.orderQty !== undefined ? p?.orderQty : "—",
+                     altUom: p?.altUom || "—",
+                     altQty: p?.altQty !== undefined ? p?.altQty : "—",
 
                      // Extended Columns
                      totalWithGst: order.totalWithGst || "—",
@@ -482,114 +686,24 @@ export default function CommitmentReviewPage() {
                      brokerName: order.brokerName || "—",
                      uploadSo: "do_document.pdf",
                      
-                     status: "Excellent", // Badge fallback
+                     status: "Excellent",
+                     products: (order.orderType === "regular" && order.products?.length > 0) 
+                        ? order.products 
+                        : (order.preApprovalProducts?.some((p: any) => p.oilType) 
+                            ? order.preApprovalProducts 
+                            : (order.products || order.data?.products || order.orderData?.products || [])),
                    }
 
                    return (
-                   <TableRow key={index}>
-                     <TableCell>
-                       <Dialog open={selectedOrder?.doNumber === order.doNumber} onOpenChange={(open) => {
-                           if (open) setSelectedOrder(order)
-                           else setSelectedOrder(null)
-                       }}>
-                         <DialogTrigger asChild>
-                           <Button size="sm" onClick={() => setSelectedOrder(order)}>Verify Order</Button>
-                         </DialogTrigger>
-                           <DialogContent className="sm:max-w-6xl !max-w-6xl max-h-[95vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                            <DialogHeader className="border-b pb-4">
-                              <DialogTitle className="text-xl font-bold text-slate-900 leading-none">Approval Of Order: {selectedOrder?.soNumber || selectedOrder?.doNumber}</DialogTitle>
-                              <DialogDescription className="text-slate-500 mt-1.5">Verify order details and complete the six-point check for commitment.</DialogDescription>
-                            </DialogHeader>
-
-                            {/* Order Summary Section */}
-                            <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 shadow-sm mt-4">
-                                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-y-6 gap-x-8">
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Party Name</Label>
-                                        <p className="text-sm font-bold text-slate-900 leading-tight">{row.customerName}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Date</Label>
-                                        <p className="text-sm font-medium text-slate-700">{row.partySoDate}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order Type</Label>
-                                        <p className="text-sm font-medium text-slate-700">{row.orderType}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Delivery Date</Label>
-                                        <p className="text-sm font-medium text-slate-700">{row.deliveryDate}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">WhatsApp No.</Label>
-                                        <p className="text-sm font-medium text-green-600 font-mono">{row.whatsapp || "—"}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Broker Name</Label>
-                                        <p className="text-sm font-medium text-slate-700">{row.brokerName || "Direct"}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Customer Type</Label>
-                                        <p className="text-sm font-medium text-slate-700 capitalize">{row.customerType}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Transport Type</Label>
-                                        <p className="text-sm font-medium text-slate-700 capitalize">{row.transportType}</p>
-                                    </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Payment Terms</Label>
-                                        <p className="text-sm font-medium text-slate-700">{row.paymentTerms}</p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="py-6 space-y-4">
-                              <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2 px-1 uppercase tracking-tight">
-                                <div className="w-1.5 h-4 bg-blue-600 rounded-full" />
-                                Six-Point Verification
-                              </h3>
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {checkItems.map((item) => (
-                                  <div key={item.id} className="flex items-center justify-between p-4 rounded-xl border border-slate-100 bg-white shadow-sm hover:border-slate-200 transition-colors">
-                                    <Label className="text-sm font-semibold text-slate-700">{item.label}</Label>
-                                    <RadioGroup
-                                      value={checklistValues[item.id]}
-                                      onValueChange={(value) => handleChecklistChange(item.id, value)}
-                                      className="flex gap-6"
-                                    >
-                                      <div className="flex items-center space-x-2">
-                                        <RadioGroupItem value="approve" id={`${item.id}-ok`} className="text-green-600" />
-                                        <Label htmlFor={`${item.id}-ok`} className="text-sm font-medium text-green-600 cursor-pointer">
-                                          Approve
-                                        </Label>
-                                      </div>
-                                      <div className="flex items-center space-x-2">
-                                        <RadioGroupItem value="reject" id={`${item.id}-no`} className="text-red-600" />
-                                        <Label htmlFor={`${item.id}-no`} className="text-sm font-medium text-red-600 cursor-pointer">
-                                          Reject
-                                        </Label>
-                                      </div>
-                                    </RadioGroup>
-                                  </div>
-                                ))}
-                              </div>
-                           </div>
-                           <DialogFooter className="border-t pt-4 sm:justify-center">
-                             <Button
-                               onClick={handleConfirmCommitment}
-                               disabled={isConfirming}
-                               className="min-w-[300px] px-8 h-11 text-base font-bold shadow-lg shadow-blue-100 transition-all hover:scale-[1.01] active:scale-[0.99]"
-                               variant={Object.values(checklistValues).includes("reject") ? "destructive" : "default"}
-                             >
-                               {isConfirming
-                                 ? "Processing..."
-                                 : Object.values(checklistValues).includes("reject")
-                                   ? "Reject & Save to History"
-                                   : "Approve All & Go to Dispatch Material"}
-                             </Button>
-                           </DialogFooter>
-                         </DialogContent>
-                       </Dialog>
+                   <TableRow 
+                      key={`${index}-${row.orderNo}-${row.productName}`}
+                      className={selectedItems.some(i => `${i.doNumber || i.orderNo}-${i._product?.productName || i._product?.oilType || 'no-prod'}` === `${row.orderNo}-${row.productName}`) ? "bg-blue-50/50" : ""}
+                   >
+                     <TableCell className="text-center">
+                        <Checkbox 
+                            checked={selectedItems.some(i => `${i.doNumber || i.orderNo}-${i._product?.productName || i._product?.oilType || 'no-prod'}` === `${row.orderNo}-${row.productName}`)}
+                            onCheckedChange={() => toggleSelectItem(order)}
+                        />
                      </TableCell>
                       {PAGE_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
                         <TableCell key={col.id} className="whitespace-nowrap text-center">
@@ -604,7 +718,7 @@ export default function CommitmentReviewPage() {
                 )})
               ) : (
                   <TableRow>
-                      <TableCell colSpan={visibleColumns.length + 1} className="text-center py-4 text-muted-foreground">
+                      <TableCell colSpan={visibleColumns.length + 2} className="text-center py-4 text-muted-foreground">
                           No orders pending for commitment review
                       </TableCell>
                   </TableRow>

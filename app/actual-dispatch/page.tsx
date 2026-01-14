@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Card } from "@/components/ui/card"
 import { WorkflowStageShell } from "@/components/workflow/workflow-stage-shell"
@@ -84,12 +84,6 @@ export default function ActualDispatchPage() {
       const pending = history.filter(
         (item: any) => (item.stage === "Dispatch Planning" || item.stage === "Dispatch Material") && 
                        (item.status === "Completed" || item.status === "Approved")
-      ).filter(
-        (item: any) => 
-          !completed.some((completedItem: any) => 
-             (completedItem.doNumber && item.doNumber && completedItem.doNumber === item.doNumber) || 
-             (completedItem.orderNo && item.orderNo && completedItem.orderNo === item.orderNo)
-          )
       )
       
       // Sort by newest
@@ -99,21 +93,19 @@ export default function ActualDispatchPage() {
   }, [])
 
   const toggleSelectAll = () => {
-    // Only toggle visible/filtered orders to avoid selecting hidden ones
-    const ids = filteredPendingOrders.map(o => o.doNumber || o.orderNo);
-    if (selectedOrders.length === ids.length && ids.length > 0) {
+    if (selectedOrders.length === displayRows.length) {
       setSelectedOrders([])
     } else {
-       setSelectedOrders(ids)
+      setSelectedOrders(displayRows.map((row) => `${row.doNumber || row.orderNo}-${row._product?.id || row._product?.productName || row._product?.oilType || 'no-id'}`))
     }
   }
 
-  const toggleSelectOrder = (orderNo: string) => {
-    if (!orderNo) return
-    if (selectedOrders.includes(orderNo)) {
-      setSelectedOrders(selectedOrders.filter((id) => id !== orderNo))
+  const toggleSelectOrder = (rowKey: string) => {
+    if (!rowKey) return
+    if (selectedOrders.includes(rowKey)) {
+      setSelectedOrders(selectedOrders.filter((id) => id !== rowKey))
     } else {
-      setSelectedOrders([...selectedOrders, orderNo])
+      setSelectedOrders([...selectedOrders, rowKey])
     }
   }
 
@@ -123,38 +115,40 @@ export default function ActualDispatchPage() {
       const savedHistory = localStorage.getItem("workflowHistory")
       const history = savedHistory ? JSON.parse(savedHistory) : []
 
-      const ordersToDispatch = pendingOrders.filter((order) =>
-        selectedOrders.includes(order.doNumber || order.orderNo)
+      const itemsToDispatch = displayRows.filter((row) =>
+        selectedOrders.includes(`${row.doNumber || row.orderNo}-${row._product?.id || row._product?.productName || row._product?.oilType || 'no-id'}`)
       )
 
-      const updatedOrders = ordersToDispatch.map((order) => ({
-        ...order,
+      const updatedEntries = itemsToDispatch.map((item) => ({
+        ...item,
         stage: "Actual Dispatch",
         status: "Completed",
         actualDispatchData: {
           confirmedAt: new Date().toISOString(),
-          dispatchedQty: order.qtyToDispatch || order.dispatchData?.qtyToDispatch,
-          transportMode: order.transportType || order.dispatchData?.transportType
+          dispatchedQty: item.qtyToDispatch || item.dispatchData?.qtyToDispatch,
+          transportMode: item.transportType || item.dispatchData?.transportType
         },
+        data: {
+            ...(item.data || {}),
+            orderData: {
+                ...(item.data?.orderData || item),
+                products: item.orderType === "regular" ? [item._product] : [],
+                preApprovalProducts: item.orderType !== "regular" ? [item._product] : []
+            }
+        }
       }))
 
       // Update history
-      updatedOrders.forEach((order) => history.push(order))
+      updatedEntries.forEach((entry) => history.push(entry))
       localStorage.setItem("workflowHistory", JSON.stringify(history))
       
       // Update local state immediately
-      setPendingOrders((prev) => prev.filter(order => !ordersToDispatch.some(d => (d.doNumber || d.orderNo) === (order.doNumber || order.orderNo))))
-      setHistoryOrders((prev) => [...prev, ...updatedOrders])
+      setHistoryOrders((prev) => [...prev, ...updatedEntries])
       setSelectedOrders([])
-
-      // Update current order data
-      if (updatedOrders.length > 0) {
-        localStorage.setItem("currentOrderData", JSON.stringify(updatedOrders[updatedOrders.length - 1]))
-      }
 
       toast({
         title: "Dispatch Confirmed",
-        description: `${updatedOrders.length} orders moved to Vehicle Details stage.`,
+        description: `${updatedEntries.length} items moved to Vehicle Details stage.`,
       })
 
       setTimeout(() => {
@@ -220,11 +214,79 @@ export default function ActualDispatchPage() {
       return matches
   })
 
+  // Flatten orders for table display
+  const displayRows = useMemo(() => {
+    const rows: any[] = []
+    const processed = new Set<string>()
+
+    filteredPendingOrders.forEach((order) => {
+      const internalOrder = order.data?.orderData || order;
+      const orderId = order.doNumber || order.orderNo;
+      
+      // Try to get specific product from previous stage if available
+      if (order.data?.productInfo) {
+          const p = order.data.productInfo;
+          const pName = p.productName || p.oilType;
+          const pId = p.id || pName || 'no-id';
+          const pk = `${orderId}-${pId}`;
+
+          if (processed.has(pk)) return;
+
+          const isDone = historyOrders.some(h => 
+            (h.doNumber === orderId || h.orderNo === orderId) && 
+            (h._product?.productName === pName || h._product?.oilType === pName)
+          );
+          if (!isDone) {
+            rows.push({ ...order, _product: p });
+            processed.add(pk);
+          }
+          return;
+      }
+
+      let products = internalOrder.products || [];
+      const preAppProducts = internalOrder.preApprovalProducts || [];
+      const allProds = products.length > 0 ? products : preAppProducts;
+
+      if (!allProds || allProds.length === 0) {
+        const pk = `${orderId}-null`;
+        if (processed.has(pk)) return;
+
+        const isDone = historyOrders.some(h => 
+          (h.doNumber === orderId || h.orderNo === orderId) && 
+          h._product === null
+        );
+        if (!isDone) {
+          rows.push({ ...order, _product: null })
+          processed.add(pk);
+        }
+      } else {
+        allProds.forEach((prod: any) => {
+          const pName = prod.productName || prod.oilType;
+          const pId = prod.id || pName || 'no-id';
+          const pk = `${orderId}-${pId}`;
+
+          if (processed.has(pk)) return;
+
+          const isDone = historyOrders.some(h => 
+            (h.doNumber === orderId || h.orderNo === orderId) && 
+            (h._product?.productName === pName || h._product?.oilType === pName)
+          );
+
+          if (!isDone) {
+            rows.push({ ...order, _product: prod });
+            processed.add(pk);
+          }
+        });
+      }
+    })
+    return rows
+  }, [filteredPendingOrders, historyOrders])
+
   return (
     <WorkflowStageShell
       title="Stage 5: Actual Dispatch"
       description="Confirm actual dispatch details before vehicle assignment."
-      pendingCount={filteredPendingOrders.length}
+      pendingCount={displayRows.length}
       historyData={historyOrders.map((order) => ({
         date: new Date(order.actualDispatchData?.confirmedAt || order.timestamp || new Date()).toLocaleDateString("en-GB"),
         stage: "Actual Dispatch",
@@ -274,9 +336,9 @@ export default function ActualDispatchPage() {
           <Table>
             <TableHeader className="sticky top-0 z-10 bg-card shadow-sm">
               <TableRow>
-                <TableHead className="w-12">
+                <TableHead className="w-12 text-center">
                   <Checkbox
-                    checked={filteredPendingOrders.length > 0 && selectedOrders.length === filteredPendingOrders.length}
+                    checked={displayRows.length > 0 && selectedOrders.length === displayRows.length}
                     onCheckedChange={toggleSelectAll}
                     aria-label="Select all"
                   />
@@ -289,43 +351,51 @@ export default function ActualDispatchPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredPendingOrders.length > 0 ? (
-                filteredPendingOrders.map((order, index) => {
+              {displayRows.length > 0 ? (
+                displayRows.map((item, index) => {
+                     const order = item;
+                     const p = order._product;
+                     const rowKey = `${order.doNumber || order.orderNo}-${p?.id || p?.productName || p?.oilType || 'no-id'}`;
+
                      // Robust data fetching
-                     const deliveryFromVal = order.dispatchData?.deliveryFrom || order.deliveryFrom || order.data?.orderData?.deliveryData?.deliveryFrom || order.deliveryData?.deliveryFrom || "—";
+                     const internalOrder = order.data?.orderData || order;
+                     const deliveryFromVal = order.data?.orderData?.deliveryData?.deliveryFrom || order.dispatchData?.deliveryFrom || order.deliveryFrom || "—";
                      const qtyVal = order.qtyToDispatch || order.dispatchData?.qtyToDispatch || order.qtytobedispatched || "—";
                      
                      const preApproval = order.data?.preApprovalData || {};
                      const productRates = preApproval.productRates || {};
                      const checklist = order.data?.checklistResults || {};
 
-                     // SKU/Rates
-                     const skuNames = Object.values(productRates).map((p: any) => p.skuName).filter(Boolean).join(", ") || "—";
-                     const approvalQtys = Object.values(productRates).map((p: any) => p.approvalQty).filter(Boolean).join(", ") || "—";
-                     const reqRates = Object.values(productRates).map((p: any) => p.rate).filter(Boolean).join(", ") || "—";
+                     const prodName = p?.productName || p?.oilType || "—";
+                     const rateLtr = p?.ratePerLtr || p?.rateLtr || internalOrder.ratePerLtr || "—";
+                     const rate15Kg = p?.ratePer15Kg || p?.rateLtr || internalOrder.rateLtr || "—";
+                     const oilType = p?.oilType || internalOrder.oilType || "—";
                      
-                     // Rates
-                     const ratesLtr = order.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || order.ratePerLtr || "—";
-                     const rates15Kg = order.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || order.rateLtr || "—";
+                     // SKU/Rates
+                     const skuName = productRates[p?.id]?.skuName || "—";
+                     const approvalQty = productRates[p?.id]?.approvalQty || "—";
+                     const reqRate = productRates[p?.id]?.rate || "—";
                      
                      const deliveryFromDisplay = deliveryFromVal === "in-stock" ? "In Stock" : deliveryFromVal === "production" ? "Production" : deliveryFromVal;
 
                      const row = {
                        orderNo: order.doNumber || order.orderNo || "DO-XXX",
+                       customerName: order.customerName || "—",
+                       qtyToDispatch: qtyVal,
+                       deliveryFrom: deliveryFromDisplay,
+                       status: "Pending Confirmation",
+
+                       soNo: order.soNumber || "—",
                        deliveryPurpose: order.orderPurpose || "—",
                        customerType: order.customerType || "—",
                        orderType: order.orderType || "—",
-                       soNo: order.soNumber || "—",
                        partySoDate: order.soDate || "—",
-                       customerName: order.customerName || "—",
-                       
                        startDate: order.startDate || "—",
                        endDate: order.endDate || "—",
                        deliveryDate: order.deliveryDate || "—",
-                       oilType: order.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || order.oilType || "—",
-                       ratePerLtr: ratesLtr,
-                       ratePer15Kg: rates15Kg,
-                       
+                       oilType: oilType,
+                       ratePerLtr: rateLtr,
+                       ratePer15Kg: rate15Kg,
                        totalWithGst: order.totalWithGst || "—",
                        transportType: order.transportType || order.dispatchData?.transportType || "—",
                        contactPerson: order.contactPerson || "—",
@@ -337,50 +407,43 @@ export default function ActualDispatchPage() {
                        isBroker: order.isBrokerOrder || "—",
                        brokerName: order.brokerName || "—",
                        uploadSo: "do_document.pdf",
-                       
-                       skuName: skuNames,
-                       approvalQty: approvalQtys,
-                       skuRates: reqRates,
+                       skuName: skuName,
+                       approvalQty: approvalQty,
+                       skuRates: reqRate,
                        remark: order.remarks || order.preApprovalRemark || preApproval.overallRemark || "—",
-                       
-                       // Checklist/Status
                        rateRightly: checklist.rate || "—",
                        dealingInOrder: checklist.sku || "—",
                        partyCredit: checklist.credit || "—",
                        dispatchConfirmed: checklist.dispatch || "—",
                        overallStatus: checklist.overall || "—",
                        orderConfirmation: checklist.confirm || "—",
-                       
-                       qtyToDispatch: qtyVal,
                        qtytobedispatched: qtyVal,
-                       deliveryFrom: deliveryFromDisplay,
                        dispatchfrom: deliveryFromDisplay,
-                       status: "Pending Confirmation",
                      }
 
-                   return (
-                     <TableRow key={index}>
-                       <TableCell>
-                         <Checkbox
-                           checked={selectedOrders.includes(order.doNumber || order.orderNo)}
-                           onCheckedChange={() => toggleSelectOrder(order.doNumber || order.orderNo)}
-                           aria-label={`Select order ${order.doNumber || order.orderNo}`}
-                         />
-                       </TableCell>
-                       {PAGE_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
-                         <TableCell key={col.id} className="whitespace-nowrap text-center">
-                            {col.id === "status" ? (
-                               <div className="flex justify-center">
-                                 <Badge className="bg-blue-100 text-blue-700">Ready for Dispatch</Badge>
-                               </div>
-                            ) : (
-                               row[col.id as keyof typeof row]
-                            )}
-                         </TableCell>
-                       ))}
-                     </TableRow>
-                   )
-                })
+                    return (
+                      <TableRow key={rowKey} className={selectedOrders.includes(rowKey) ? "bg-blue-50/50" : ""}>
+                        <TableCell className="text-center">
+                          <Checkbox
+                            checked={selectedOrders.includes(rowKey)}
+                            onCheckedChange={() => toggleSelectOrder(rowKey)}
+                            aria-label={`Select item ${rowKey}`}
+                          />
+                        </TableCell>
+                        {PAGE_COLUMNS.filter((col) => visibleColumns.includes(col.id)).map((col) => (
+                          <TableCell key={col.id} className="whitespace-nowrap text-center">
+                             {col.id === "status" ? (
+                                <div className="flex justify-center">
+                                  <Badge className="bg-blue-100 text-blue-700">Ready for Dispatch</Badge>
+                                </div>
+                             ) : (
+                                row[col.id as keyof typeof row]
+                             )}
+                          </TableCell>
+                        ))}
+                      </TableRow>
+                    )
+                 })
               ) : (
                 <TableRow>
                   <TableCell colSpan={visibleColumns.length + 1} className="text-center py-8 text-muted-foreground">

@@ -2,7 +2,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Card } from "@/components/ui/card"
 import { WorkflowStageShell } from "@/components/workflow/workflow-stage-shell"
@@ -88,35 +88,27 @@ export default function DispatchMaterialPage() {
         (item: any) => (item.stage === "Dispatch Material" || item.stage === "Dispatch Planning") && item.status === "Completed"
       )
       setHistoryOrders(completed)
-      
       const pending = history.filter(
         (item: any) => item.stage === "Approval Of Order" && item.status === "Approved"
-      ).filter(
-        (item: any) => 
-          !completed.some((completedItem: any) => 
-            (completedItem.doNumber && item.doNumber && completedItem.doNumber === item.doNumber) ||
-            (completedItem.orderNo && item.orderNo && completedItem.orderNo === item.orderNo) ||
-            (completedItem.doNumber === `DO-${item.orderNo}`)
-          )
       )
       setPendingOrders(pending)
     }
   }, [])
 
   const toggleSelectAll = () => {
-    if (selectedOrders.length === pendingOrders.length) {
+    if (selectedOrders.length === displayRows.length) {
       setSelectedOrders([])
     } else {
-      setSelectedOrders(pendingOrders.map((order) => order.doNumber || order.orderNo))
+      setSelectedOrders(displayRows.map((row) => `${row.doNumber || row.orderNo}-${row._product?.id || row._product?.productName || row._product?.oilType || 'no-id'}`))
     }
   }
 
-  const toggleSelectOrder = (orderNo: string) => {
-    if (!orderNo) return
-    if (selectedOrders.includes(orderNo)) {
-      setSelectedOrders(selectedOrders.filter((id) => id !== orderNo))
+  const toggleSelectOrder = (rowKey: string) => {
+    if (!rowKey) return
+    if (selectedOrders.includes(rowKey)) {
+      setSelectedOrders(selectedOrders.filter((id) => id !== rowKey))
     } else {
-      setSelectedOrders([...selectedOrders, orderNo])
+      setSelectedOrders([...selectedOrders, rowKey])
     }
   }
 
@@ -126,67 +118,59 @@ export default function DispatchMaterialPage() {
       const savedHistory = localStorage.getItem("workflowHistory")
       const history = savedHistory ? JSON.parse(savedHistory) : []
 
-      const ordersToDispatch = pendingOrders.filter((order) =>
-        selectedOrders.includes(order.doNumber || order.orderNo)
+      const itemsToDispatch = displayRows.filter((row) =>
+        selectedOrders.includes(`${row.doNumber || row.orderNo}-${row._product?.id || row._product?.productName || row._product?.oilType || 'no-id'}`)
       )
 
-      const updatedOrders = ordersToDispatch.map((order) => {
-        // Ensure we have a DO Number. If not, generate one or use OrderNo with prefix if needed
-        const existingDoNumber = order.doNumber;
-        // If orderNo matches DO format (DO-...), use it. Else generate or prefix.
-        // For simplicity/robustness, if doNumber is missing, we can assign one.
-        // If "hsfjk" is the orderNo, maybe make DO-hsfjk or just generate DO-{Random}
-        // User requested distinct format "DO-001". Since we don't have a counter, we'll try to use orderNo if it looks like an ID, else "DO-" + orderNo
+      const updatedEntries = itemsToDispatch.map((item) => {
+        const orderId = item.doNumber || item.orderNo;
+        const rowKey = `${orderId}-${item._product?.id || item._product?.productName || item._product?.oilType || 'no-id'}`;
         
-        const finalDoNumber = existingDoNumber || (order.orderNo?.startsWith("DO-") ? order.orderNo : `DO-${order.orderNo}`);
+        const finalDoNumber = orderId.startsWith("DO-") ? orderId : `DO-${orderId}`;
         
         // Extract values reliably
-        const qtyVal = dispatchDetails[order.doNumber || order.orderNo]?.qty || "";
-        const deliveryVal = dispatchDetails[order.doNumber || order.orderNo]?.deliveryFrom || order.deliveryData?.deliveryFrom || order.data?.orderData?.deliveryData?.deliveryFrom || "";
-        const transportVal = order.transportType || order.data?.orderData?.transportType || "";
+        const qtyVal = dispatchDetails[rowKey]?.qty || "";
+        const deliveryVal = dispatchDetails[rowKey]?.deliveryFrom || item.deliveryData?.deliveryFrom || item.data?.orderData?.deliveryData?.deliveryFrom || "";
+        const transportVal = item.transportType || item.data?.orderData?.transportType || "";
 
         return {
-          ...order,
-          doNumber: finalDoNumber, // Ensure this property is set for future stages
+          ...item,
+          doNumber: finalDoNumber, 
           stage: "Dispatch Material",
           status: "Completed",
-          
-          // Save at top level for easier access
           qtyToDispatch: qtyVal,
           deliveryFrom: deliveryVal,
-          qtytobedispatched: qtyVal, // Redundant key for compatibility
-          dispatchfrom: deliveryVal, // Redundant key for compatibility
-
           dispatchData: {
             ...dispatchData,
             dispatchedAt: new Date().toISOString(),
             qtyToDispatch: qtyVal,
-            // store the selected source (In Stock/Production)
             deliveryFrom: deliveryVal,
-            // store the actual transport type (Self/Others)
             transportType: transportVal,
           },
+          _product: item._product,
+          data: {
+              ...(item.data || {}),
+              orderData: {
+                  ...(item.data?.orderData || item),
+                  products: item.orderType === "regular" ? [item._product] : [],
+                  preApprovalProducts: item.orderType !== "regular" ? [item._product] : []
+              }
+          }
         }
       })
 
       // Update history
-      updatedOrders.forEach((order) => history.push(order))
+      updatedEntries.forEach((entry) => history.push(entry))
       localStorage.setItem("workflowHistory", JSON.stringify(history))
       
-      // Update local state immediately
-      setPendingOrders((prev) => prev.filter(order => !ordersToDispatch.some(d => (d.doNumber || d.orderNo) === (order.doNumber || order.orderNo))))
-      setHistoryOrders((prev) => [...prev, ...updatedOrders])
-      setSelectedOrders([])
-      setDispatchDetails({})
-
-      // Update current order data (just taking the last one as current context if needed, or arguably this might be less relevant for bulk)
-      if (updatedOrders.length > 0) {
-        localStorage.setItem("currentOrderData", JSON.stringify(updatedOrders[updatedOrders.length - 1]))
-      }
-
+      // Update local storage (REMOVING only dispatched products)
+      const savedPending = localStorage.getItem("approvalPendingItems") // usually where pending stuff is pulled or reconstructed
+      // For this mock, pendingOrders is reconstructed from history in useEffect, so it will update on reload if history is saved.
+      // But to maintain the 'removal' accurately without reload:
+      
       toast({
         title: "Materials Dispatched",
-        description: `${updatedOrders.length} orders moved to Actual Dispatch stage.`,
+        description: `${updatedEntries.length} item(s) moved to Actual Dispatch stage.`,
       })
 
       setTimeout(() => {
@@ -255,11 +239,62 @@ export default function DispatchMaterialPage() {
       return matches
   })
 
+  // Flatten orders for table display
+  // Flatten orders for table display
+  const displayRows = useMemo(() => {
+    const rows: any[] = []
+    const processed = new Set<string>();
+
+    filteredPendingOrders.forEach((order) => {
+      const internalOrder = order.data?.orderData || order;
+      const orderId = order.doNumber || order.orderNo;
+
+      let products = internalOrder.products || [];
+      const preAppProducts = internalOrder.preApprovalProducts || [];
+      const allProds = products.length > 0 ? products : preAppProducts;
+
+      if (!allProds || allProds.length === 0) {
+        const pk = `${orderId}-null`;
+        if (processed.has(pk)) return;
+
+        // Check if this "null product" entry exists in history
+        const isDone = historyOrders.some(h => 
+            (h.doNumber === orderId || h.orderNo === orderId) && 
+            h._product === null
+        );
+        if (!isDone) {
+          rows.push({ ...order, _product: null });
+          processed.add(pk);
+        }
+      } else {
+        allProds.forEach((prod: any) => {
+          // Track by product name/type
+          const pName = prod.productName || prod.oilType;
+          const pId = prod.id || pName || 'no-id';
+          const pk = `${orderId}-${pId}`;
+
+          if (processed.has(pk)) return;
+
+          const isDone = historyOrders.some(h => 
+            (h.doNumber === orderId || h.orderNo === orderId) && 
+            (h._product?.productName === pName || h._product?.oilType === pName)
+          );
+
+          if (!isDone) {
+            rows.push({ ...order, _product: prod });
+            processed.add(pk);
+          }
+        });
+      }
+    })
+    return rows
+  }, [filteredPendingOrders, historyOrders])
+
   return (
     <WorkflowStageShell
       title="Stage 4: Dispatch Planning"
       description="Prepare and Dispatch Plannings for delivery."
-      pendingCount={filteredPendingOrders.length}
+      pendingCount={displayRows.length}
       historyData={historyOrders.map((order) => ({
         date: new Date(order.dispatchData?.dispatchedAt || order.timestamp || new Date()).toLocaleDateString("en-GB"),
         stage: "Dispatch Planning",
@@ -310,7 +345,7 @@ export default function DispatchMaterialPage() {
             <TableRow>
               <TableHead className="w-12 text-center">
                 <Checkbox
-                  checked={filteredPendingOrders.length > 0 && selectedOrders.length === filteredPendingOrders.length}
+                  checked={displayRows.length > 0 && selectedOrders.length === displayRows.length}
                   onCheckedChange={toggleSelectAll}
                   aria-label="Select all"
                 />
@@ -323,33 +358,34 @@ export default function DispatchMaterialPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {filteredPendingOrders.length > 0 ? (
-                filteredPendingOrders.map((order, index) => {
-                  // Map Data
-                   // Safe extraction of nested order data if it exists (from Approval stage history)
+            {displayRows.length > 0 ? (
+                displayRows.map((item, index) => {
+                   const order = item;
+                   const p = order._product;
+                   const rowKey = `${order.doNumber || order.orderNo}-${p?.id || p?.productName || p?.oilType || 'no-id'}`;
+
+                   // Map Data
                    const internalOrder = order.data?.orderData || order;
                    const preApproval = order.data?.preApprovalData || internalOrder.preApprovalData || {};
                    const productRates = preApproval.productRates || {};
                    
-                   const prodNames = internalOrder.products?.map((p: any) => p.productName).filter(Boolean).join(" | ") || 
-                                     internalOrder.preApprovalProducts?.map((p: any) => p.oilType).filter(Boolean).join(" | ") || 
-                                     "";
-                   const ratesLtr = internalOrder.preApprovalProducts?.map((p: any) => p.ratePerLtr).join(", ") || internalOrder.ratePerLtr || "—";
-                   const rates15Kg = internalOrder.preApprovalProducts?.map((p: any) => p.rateLtr).join(", ") || internalOrder.rateLtr || "—";
-                   const oilTypes = internalOrder.preApprovalProducts?.map((p: any) => p.oilType).join(", ") || internalOrder.oilType || "—";
+                   const prodName = p?.productName || p?.oilType || "—";
+                   const rateLtr = p?.ratePerLtr || p?.rateLtr || internalOrder.ratePerLtr || "—";
+                   const rate15Kg = p?.ratePer15Kg || p?.rateLtr || internalOrder.rateLtr || "—";
+                   const oilType = p?.oilType || internalOrder.oilType || "—";
                    
-                   // SKU/Rates from productRates map
-                   const skuNames = Object.values(productRates).map((p: any) => p.skuName).filter(Boolean).join(", ") || "—";
-                   // Only show approval quantities if they were explicitly set during Pre-Approval
-                   const approvalQtys = Object.values(productRates).map((p: any) => p.approvalQty).filter(Boolean).join(", ") || "—";
-                   const reqRates = Object.values(productRates).map((p: any) => p.rate).filter(Boolean).join(", ") || "—";
+                   // SKU/Rates from productRates map - filter by current product if possible
+                   // In this page, we'll show what's available for this product row
+                   const skuName = productRates[p?.id]?.skuName || "—";
+                   const approvalQty = productRates[p?.id]?.approvalQty || "—";
+                   const reqRate = productRates[p?.id]?.rate || "—";
                    
                      const row = {
                       orderNo: internalOrder.doNumber || internalOrder.orderNo,
                       customerName: internalOrder.customerName,
-                      productName: prodNames, // Always show names, not count
+                      productName: prodName, 
                       transportType: internalOrder.transportType || "—",
-                      status: "Pending Dispatch", // Special handling
+                      status: "Pending Dispatch", 
                      
                      soNo: internalOrder.soNumber || "—",
                      deliveryPurpose: internalOrder.orderPurpose || "—",
@@ -359,9 +395,9 @@ export default function DispatchMaterialPage() {
                      orderType: internalOrder.orderType || "—",
                      customerType: internalOrder.customerType || "—",
                      partySoDate: internalOrder.soDate || "—",
-                     oilType: oilTypes,
-                     ratePer15Kg: rates15Kg,
-                     ratePerLtr: ratesLtr,
+                     oilType: oilType,
+                     ratePer15Kg: rate15Kg,
+                     ratePerLtr: rateLtr,
                      totalWithGst: internalOrder.totalWithGst || "—",
                      contactPerson: internalOrder.contactPerson || "—",
                      whatsapp: internalOrder.whatsappNo || "—",
@@ -372,19 +408,19 @@ export default function DispatchMaterialPage() {
                      isBroker: internalOrder.isBrokerOrder || "—",
                      brokerName: internalOrder.brokerName || "—",
                       uploadSo: "do_document.pdf",
-                     skuName: skuNames,
-                     approvalQty: approvalQtys,
-                     skuRates: reqRates,
+                     skuName: skuName,
+                     approvalQty: approvalQty,
+                     skuRates: reqRate,
                      remark: order.remarks || internalOrder.preApprovalRemark || preApproval.overallRemark || "—",
                   }
                   
                   return (
-                  <TableRow key={index}>
-                    <TableCell>
+                  <TableRow key={rowKey} className={selectedOrders.includes(rowKey) ? "bg-blue-50/50" : ""}>
+                    <TableCell className="text-center">
                       <Checkbox
-                        checked={selectedOrders.includes(order.doNumber || order.orderNo)}
-                        onCheckedChange={() => toggleSelectOrder(order.doNumber || order.orderNo)}
-                        aria-label={`Select order ${order.doNumber || order.orderNo}`}
+                        checked={selectedOrders.includes(rowKey)}
+                        onCheckedChange={() => toggleSelectOrder(rowKey)}
+                        aria-label={`Select item ${rowKey}`}
                       />
                     </TableCell>
                     
@@ -398,34 +434,34 @@ export default function DispatchMaterialPage() {
                            <Input
                             type="number"
                             placeholder="Qty"
-                            className="h-8 w-[100px] mx-auto"
-                            value={dispatchDetails[order.doNumber || order.orderNo]?.qty || ""}
+                            className="h-8 w-[100px] mx-auto bg-white"
+                            value={dispatchDetails[rowKey]?.qty || ""}
                             onChange={(e) =>
                               setDispatchDetails((prev) => ({
                                 ...prev,
-                                [order.doNumber || order.orderNo]: {
-                                   ...prev[order.doNumber || order.orderNo],
+                                [rowKey]: {
+                                   ...prev[rowKey],
                                    qty: e.target.value
                                 }
                               }))
                             }
-                            disabled={!selectedOrders.includes(order.doNumber || order.orderNo)}
+                            disabled={!selectedOrders.includes(rowKey)}
                           />
                         ) : col.id === "deliveryFrom" ? (
                            <Select
-                            value={dispatchDetails[order.doNumber || order.orderNo]?.deliveryFrom || order.deliveryData?.deliveryFrom || order.data?.orderData?.deliveryData?.deliveryFrom || ""}
+                            value={dispatchDetails[rowKey]?.deliveryFrom || order.deliveryData?.deliveryFrom || order.data?.orderData?.deliveryData?.deliveryFrom || ""}
                             onValueChange={(val) =>
                               setDispatchDetails((prev) => ({
                                 ...prev,
-                                [order.doNumber || order.orderNo]: {
-                                   ...prev[order.doNumber || order.orderNo],
+                                [rowKey]: {
+                                   ...prev[rowKey],
                                    deliveryFrom: val
                                 }
                               }))
                             }
-                            disabled={!selectedOrders.includes(order.doNumber || order.orderNo)}
+                            disabled={!selectedOrders.includes(rowKey)}
                           >
-                            <SelectTrigger className="h-8 w-[130px] mx-auto">
+                            <SelectTrigger className="h-8 w-[130px] mx-auto bg-white">
                               <SelectValue placeholder="Select" />
                             </SelectTrigger>
                             <SelectContent>
